@@ -26,10 +26,13 @@ const installPrompt  = $('installPrompt');
 const installAccept  = $('installAccept');
 const installDismiss = $('installDismiss');
 const offlineInd     = $('offlineIndicator');
+const searchSuggest  = $('searchSuggestions');
 
 // ── State ──────────────────────────────────────────────────────────────────
-let deferredPrompt = null;
-let lastLoc        = null;
+let deferredPrompt   = null;
+let lastLoc          = null;
+let selectedSuggest  = -1;
+let suggestions      = [];
 
 // ── WMO Weather Codes → [dayIcon, nightIcon, Swedish label] ───────────────
 const WMO = {
@@ -149,6 +152,62 @@ async function reverseGeocode(lat, lon) {
     return place ? [place, reg].filter(Boolean).join(', ') : null;
   } catch { return null; }
 }
+
+// ── Autocomplete ───────────────────────────────────────────────────────────
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
+async function fetchSuggestions(query) {
+  if (query.length < 2) {
+    hideSuggestions();
+    return;
+  }
+  try {
+    const res = await fetch(
+      'https://geocoding-api.open-meteo.com/v1/search?' +
+      'name=' + encodeURIComponent(query) + '&count=5&language=sv&format=json'
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    suggestions = data.results || [];
+    renderSuggestions();
+  } catch { /* ignore */ }
+}
+
+function renderSuggestions() {
+  if (!suggestions.length) {
+    hideSuggestions();
+    return;
+  }
+  searchSuggest.innerHTML = suggestions.map((s, i) =>
+    '<div class="suggestion-item' + (i === selectedSuggest ? ' selected' : '') + '" data-index="' + i + '">' +
+    '<div class="suggestion-name">' + s.name + '</div>' +
+    '<div class="suggestion-region">' + [s.admin1, s.country].filter(Boolean).join(', ') + '</div>' +
+    '</div>'
+  ).join('');
+  searchSuggest.classList.add('active');
+}
+
+function hideSuggestions() {
+  searchSuggest.classList.remove('active');
+  selectedSuggest = -1;
+  suggestions = [];
+}
+
+function selectSuggestion(index) {
+  const s = suggestions[index];
+  if (!s) return;
+  searchInput.value = s.name;
+  hideSuggestions();
+  fetchWeather(s.latitude, s.longitude, [s.name, s.admin1, s.country].filter(Boolean).join(', '));
+}
+
+const debouncedFetch = debounce(fetchSuggestions, 300);
 
 // ── API: Open-Meteo (primary – always CORS-friendly) ──────────────────────
 async function fetchOpenMeteo(lat, lon) {
@@ -562,9 +621,44 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── Event Listeners ────────────────────────────────────────────────────────
-searchBtn.addEventListener('click',  handleSearch);
-searchInput.addEventListener('keydown', e => e.key === 'Enter' && handleSearch());
+searchBtn.addEventListener('click', handleSearch);
 geolocateBtn.addEventListener('click', handleGeolocate);
+
+// Autocomplete event listeners
+searchInput.addEventListener('input', e => debouncedFetch(e.target.value.trim()));
+
+searchInput.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectedSuggest = Math.min(selectedSuggest + 1, suggestions.length - 1);
+    renderSuggestions();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectedSuggest = Math.max(selectedSuggest - 1, -1);
+    renderSuggestions();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (selectedSuggest >= 0) {
+      selectSuggestion(selectedSuggest);
+    } else {
+      hideSuggestions();
+      handleSearch();
+    }
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+});
+
+searchSuggest.addEventListener('click', e => {
+  const item = e.target.closest('.suggestion-item');
+  if (item) selectSuggestion(Number(item.dataset.index));
+});
+
+document.addEventListener('click', e => {
+  if (!searchInput.contains(e.target) && !searchSuggest.contains(e.target)) {
+    hideSuggestions();
+  }
+});
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!navigator.onLine) {
