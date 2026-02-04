@@ -213,7 +213,8 @@ async function fetchYR(lat, lon) {
   if (!res.ok) throw new Error('YR: HTTP ' + res.status);
   const data = await res.json();
 
-  const ts = data.properties?.forecast?.timeseries;
+  // MET.no har timeseries direkt under properties (inte properties.forecast)
+  const ts = data.properties?.timeseries;
   if (!ts?.length) throw new Error('YR: ingen data');
 
   const inst = ts[0].data?.instant?.details  || {};
