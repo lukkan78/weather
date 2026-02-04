@@ -151,7 +151,8 @@ async function fetchOpenMeteo(lat, lon) {
     '&current_weather=true' +
     '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,weathercode' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,precipitation_probability_max,weathercode' +
-    '&timezone=auto&forecast_days=7';
+    '&timezone=auto&forecast_days=7' +
+    '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
 
   const res = await fetch(url);
   if (!res.ok) throw new Error('Open-Meteo: HTTP ' + res.status);
