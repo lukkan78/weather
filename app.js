@@ -343,7 +343,7 @@ function renderCurrent(ens) {
   currentIcon.textContent   = ens.current.icon;
   currentTemp.textContent   = ens.current.temp;
   currentDesc.textContent   = ens.current.desc;
-  currentWind.textContent   = ens.current.wind + ' m/s   ' + (ens.current.windDir || '');
+  currentWind.textContent   = ens.current.wind + ' m/s \u00A0\u00A0 ' + (ens.current.windDir || '');
   currentHumid.textContent  = ens.current.humidity + ' %';
   currentPrecip.textContent = ens.current.precip   + ' mm';
 
@@ -360,7 +360,7 @@ function renderSources(results) {
     card.innerHTML = r.status === 'ok'
       ? '<div class="source-name">'  + r.source + '</div>'
       + '<div class="source-temp">'  + r.current.temp + '°C</div>'
-      + '<div class="source-details">💨 ' + r.current.wind + ' m/s &nbsp;' + (r.current.windDir || '') + ' &nbsp; 💧 ' + r.current.humidity + ' %</div>'
+      + '<div class="source-details">💨 ' + r.current.wind + ' m/s&nbsp;&nbsp;' + (r.current.windDir || '') + ' &nbsp; 💧 ' + r.current.humidity + ' %</div>'
       + '<span class="source-status status-ok">OK</span>'
       : '<div class="source-name">'  + r.source + '</div>'
       + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
