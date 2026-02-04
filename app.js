@@ -213,9 +213,13 @@ async function fetchYR(lat, lon) {
   if (!res.ok) throw new Error('YR: HTTP ' + res.status);
   const data = await res.json();
 
-  // MET.no har timeseries direkt under properties (inte properties.forecast)
+  // MET.no har timeseries direkt under properties
   const ts = data.properties?.timeseries;
-  if (!ts?.length) throw new Error('YR: ingen data');
+  if (!ts?.length) {
+    // Debug: visa vad vi faktiskt fick
+    const keys = Object.keys(data || {}).join(', ') || 'empty';
+    throw new Error('YR: ingen data (keys: ' + keys + ')');
+  }
 
   const inst = ts[0].data?.instant?.details  || {};
   const next = ts[0].data?.next_1hours       || {};
