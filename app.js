@@ -206,8 +206,10 @@ async function fetchOpenMeteo(lat, lon) {
 
 // ── API: YR.no ─────────────────────────────────────────────────────────────
 async function fetchYR(lat, lon) {
+  // YR/MET.no kräver User-Agent header och korrekt endpoint
   const res = await fetch(
-    'https://api.yr.no/weatherapi/v2/forecast.json?lat=' + lat + '&lon=' + lon + '&altitude=0'
+    'https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=' + lat.toFixed(4) + '&lon=' + lon.toFixed(4),
+    { headers: { 'User-Agent': 'VaderensemblePWA/1.0 github.com/vaderensemble' } }
   );
   if (!res.ok) throw new Error('YR: HTTP ' + res.status);
   const data = await res.json();
@@ -246,9 +248,10 @@ async function fetchYR(lat, lon) {
 
 // ── API: SMHI ──────────────────────────────────────────────────────────────
 async function fetchSMHI(lat, lon) {
-  const res = await fetch(
-    'https://api.smhi.se/v1/weather/forecast/point?lat=' + lat + '&lon=' + lon
-  );
+  // SMHI kräver lon/lat i URL-path, inte query params
+  const url = 'https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/' +
+    lon.toFixed(6) + '/lat/' + lat.toFixed(6) + '/data.json';
+  const res = await fetch(url);
   if (!res.ok) throw new Error('SMHI: HTTP ' + res.status);
   const data = await res.json();
 
