@@ -92,6 +92,13 @@ function yrIco(sym) {
 const pad2   = n => String(n).padStart(2, '0');
 const round1 = n => Math.round(n * 10) / 10;
 
+// Konvertera grader till kompassriktning
+function degToDir(deg) {
+  if (deg == null) return '';
+  const dirs = ['N', 'NÖ', 'Ö', 'SÖ', 'S', 'SV', 'V', 'NV'];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
 // Extract HH:MM straight from the ISO string – avoids JS Date TZ quirks.
 // Works for both "2024-01-15T14:00" and "2024-01-15T14:00:00+01:00".
 function fmtTime(iso) {
@@ -179,6 +186,7 @@ async function fetchOpenMeteo(lat, lon) {
     current: {
       temp:     round1(cur.temperature),
       wind:     round1(cur.windspeed),
+      windDir:  degToDir(cur.winddirection),
       humidity: d.hourly.relative_humidity_2m[idx] ?? 0,
       precip:   round1(d.hourly.precipitation[idx] ?? 0),
       icon:     wmo(cur.weathercode, isDay).icon,
@@ -232,6 +240,7 @@ async function fetchYR(lat, lon) {
     current: {
       temp:     round1(inst.air_temperature      ?? 0),
       wind:     round1(inst.wind_speed           ?? 0),
+      windDir:  degToDir(inst.wind_from_direction),
       humidity: inst.relative_humidity           ?? 0,
       precip:   round1(next.details?.precipitation_amount ?? 0),
       icon:     yrIco(sym),
@@ -270,6 +279,7 @@ async function fetchSMHI(lat, lon) {
   const c = {
     t: get('t'),           // temperatur
     ws: get('ws'),         // vindhastighet
+    wd: get('wd'),         // vindriktning (grader)
     r: get('r'),           // relativ luftfuktighet
     pmax: get('pmax'),     // max nederbörd
   };
@@ -279,6 +289,7 @@ async function fetchSMHI(lat, lon) {
     current: {
       temp:     round1(c.t),
       wind:     round1(c.ws),
+      windDir:  degToDir(c.wd),
       humidity: Math.round(c.r),
       precip:   round1(c.pmax),
       icon:     '🌤️',
@@ -315,6 +326,7 @@ function calcEnsemble(results) {
     current: {
       temp:     round1(avg),
       wind:     round1(winds.reduce((a, b) => a + b, 0) / winds.length),
+      windDir:  primary.current.windDir,
       humidity: primary.current.humidity,
       precip:   primary.current.precip,
       icon:     primary.current.icon,
@@ -331,7 +343,7 @@ function renderCurrent(ens) {
   currentIcon.textContent   = ens.current.icon;
   currentTemp.textContent   = ens.current.temp;
   currentDesc.textContent   = ens.current.desc;
-  currentWind.textContent   = ens.current.wind    + ' m/s';
+  currentWind.textContent   = ens.current.wind + ' m/s ' + (ens.current.windDir || '');
   currentHumid.textContent  = ens.current.humidity + ' %';
   currentPrecip.textContent = ens.current.precip   + ' mm';
 
@@ -348,7 +360,7 @@ function renderSources(results) {
     card.innerHTML = r.status === 'ok'
       ? '<div class="source-name">'  + r.source + '</div>'
       + '<div class="source-temp">'  + r.current.temp + '°C</div>'
-      + '<div class="source-details">💨 ' + r.current.wind + ' m/s &nbsp; 💧 ' + r.current.humidity + ' %</div>'
+      + '<div class="source-details">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' &nbsp; 💧 ' + r.current.humidity + ' %</div>'
       + '<span class="source-status status-ok">OK</span>'
       : '<div class="source-name">'  + r.source + '</div>'
       + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
