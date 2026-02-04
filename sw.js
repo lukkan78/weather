@@ -1,5 +1,5 @@
-const CACHE     = 'väder-v3';
-const CACHE_API = 'väder-v3-api';
+const CACHE     = 'väder-v4';
+const CACHE_API = 'väder-v4-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
@@ -58,7 +58,13 @@ self.addEventListener('fetch', e => {
           }
           return res;
         })
-        .catch(() => caches.match(e.request))
+        .catch(async () => {
+          const cached = await caches.match(e.request);
+          return cached || new Response(JSON.stringify({ error: 'Network error' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        })
     );
     return;
   }
