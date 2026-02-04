@@ -206,10 +206,9 @@ async function fetchOpenMeteo(lat, lon) {
 
 // ── API: YR.no ─────────────────────────────────────────────────────────────
 async function fetchYR(lat, lon) {
-  // YR/MET.no kräver User-Agent header och korrekt endpoint
+  // MET.no API - User-Agent kan inte sättas från webbläsare (forbidden header)
   const res = await fetch(
-    'https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=' + lat.toFixed(4) + '&lon=' + lon.toFixed(4),
-    { headers: { 'User-Agent': 'VaderensemblePWA/1.0 github.com/vaderensemble' } }
+    'https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=' + lat.toFixed(4) + '&lon=' + lon.toFixed(4)
   );
   if (!res.ok) throw new Error('YR: HTTP ' + res.status);
   const data = await res.json();
@@ -255,18 +254,27 @@ async function fetchSMHI(lat, lon) {
   if (!res.ok) throw new Error('SMHI: HTTP ' + res.status);
   const data = await res.json();
 
-  const list = data.forecasts ?? (Array.isArray(data) ? data : []);
+  // SMHI returnerar timeSeries array med parameters
+  const list = data.timeSeries ?? [];
   if (!list.length) throw new Error('SMHI: ingen data');
 
-  const c = list[0];
+  // Första tidpunkten, extrahera parametrar
+  const params = list[0].parameters ?? [];
+  const get = name => params.find(p => p.name === name)?.values?.[0] ?? 0;
+  const c = {
+    t: get('t'),           // temperatur
+    ws: get('ws'),         // vindhastighet
+    r: get('r'),           // relativ luftfuktighet
+    pmax: get('pmax'),     // max nederbörd
+  };
   return {
     source: 'SMHI',
     status: 'ok',
     current: {
-      temp:     round1(c.t ?? c.temperature ?? 0),
-      wind:     round1(c.ws ?? c.windSpeed  ?? 0),
-      humidity: c.r  ?? c.humidity          ?? 0,
-      precip:   round1(c.pmax ?? c.precipitation ?? 0),
+      temp:     round1(c.t),
+      wind:     round1(c.ws),
+      humidity: Math.round(c.r),
+      precip:   round1(c.pmax),
       icon:     '🌤️',
       desc:     'SMHI-prognos',
     },
