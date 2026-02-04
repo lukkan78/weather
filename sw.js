@@ -1,5 +1,5 @@
-const CACHE     = 'väder-v1';
-const CACHE_API = 'väder-v1-api';
+const CACHE     = 'väder-v2';
+const CACHE_API = 'väder-v2-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
@@ -46,7 +46,7 @@ self.addEventListener('fetch', e => {
   // External weather / geocoding APIs → network-first, cache fallback
   if (
     url.hostname.includes('open-meteo') ||
-    url.hostname.includes('yr.no')      ||
+    url.hostname.includes('met.no')     ||
     url.hostname.includes('smhi.se')    ||
     url.hostname.includes('nominatim')
   ) {
@@ -62,4 +62,7 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
+
+  // Fallback för övriga externa requests → network only
+  e.respondWith(fetch(e.request));
 });
