@@ -1,0 +1,19 @@
+{
+  "name": "Väderensemble",
+  "short_name": "Väder",
+  "description": "Kombinerad väderprognos från YR, SMHI och Open-Meteo",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1a1a2e",
+  "background_color": "#0f0f1a",
+  "orientation": "portrait-primary",
+  "categories": ["weather"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}
