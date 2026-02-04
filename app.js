@@ -27,12 +27,19 @@ const installAccept  = $('installAccept');
 const installDismiss = $('installDismiss');
 const offlineInd     = $('offlineIndicator');
 const searchSuggest  = $('searchSuggestions');
+const dayModal       = $('dayDetailModal');
+const dayTitle       = $('dayDetailTitle');
+const daySummary     = $('dayDetailSummary');
+const dayHourly      = $('dayDetailHourly');
+const dayClose       = $('dayDetailClose');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
 let lastLoc          = null;
 let selectedSuggest  = -1;
 let suggestions      = [];
+let cachedHourly     = [];
+let cachedDaily      = [];
 
 // ── WMO Weather Codes → [dayIcon, nightIcon, Swedish label] ───────────────
 const WMO = {
@@ -215,7 +222,7 @@ async function fetchOpenMeteo(lat, lon) {
     'https://api.open-meteo.com/v1/forecast?' +
     'latitude='  + lat  + '&longitude=' + lon +
     '&current_weather=true' +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,weathercode' +
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,weathercode' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,precipitation_probability_max,weathercode' +
     '&timezone=auto&forecast_days=7' +
     '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
@@ -254,10 +261,15 @@ async function fetchOpenMeteo(lat, lon) {
     hourly: d.hourly.time.map((t, i) => {
       const h = Number(t.match(/T(\d{2})/)?.[1] ?? 12);
       return {
-        time:   t,
-        temp:   round1(d.hourly.temperature_2m[i]),
-        icon:   wmo(d.hourly.weathercode?.[i] ?? 0, h >= 6 && h < 20).icon,
-        precip: d.hourly.precipitation_probability?.[i] ?? 0,
+        time:       t,
+        temp:       round1(d.hourly.temperature_2m[i]),
+        icon:       wmo(d.hourly.weathercode?.[i] ?? 0, h >= 6 && h < 20).icon,
+        desc:       wmo(d.hourly.weathercode?.[i] ?? 0, h >= 6 && h < 20).desc,
+        precip:     d.hourly.precipitation_probability?.[i] ?? 0,
+        precipMm:   round1(d.hourly.precipitation?.[i] ?? 0),
+        wind:       round1(d.hourly.windspeed_10m?.[i] ?? 0),
+        windDir:    degToDir(d.hourly.winddirection_10m?.[i]),
+        humidity:   d.hourly.relative_humidity_2m?.[i] ?? 0,
       };
     }),
     daily: d.daily.time.map((t, i) => ({
@@ -431,6 +443,7 @@ function renderSources(results) {
 
 function renderHourly(hourly) {
   hourlyScroll.innerHTML = '';
+  cachedHourly = hourly;
   const now   = Date.now();
   const items = hourly
     .filter(h => new Date(h.time).getTime() >= now - 1800000)  // 30 min grace
@@ -451,15 +464,18 @@ function renderHourly(hourly) {
 
 function renderDaily(daily) {
   dailyList.innerHTML = '';
+  cachedDaily = daily;
   if (!daily.length) return;
 
   const allMin = Math.min(...daily.map(d => d.tempMin));
   const allMax = Math.max(...daily.map(d => d.tempMax));
   const range  = allMax - allMin || 1;
 
-  daily.forEach(d => {
+  daily.forEach((d, index) => {
     const el       = document.createElement('div');
     el.className   = 'daily-item';
+    el.dataset.index = index;
+    el.style.cursor = 'pointer';
     const dayLabel = isToday(d.time) ? 'Idag' : fmtDay(d.time);
     const leftPct  = ((d.tempMin - allMin) / range) * 100;
     const widthPct = ((d.tempMax - d.tempMin) / range) * 100;
@@ -482,8 +498,61 @@ function renderDaily(daily) {
         + '<span class="confidence-dot" style="background:' + dotColor + '"></span>'
         + '<span class="daily-confidence-text">💧 ' + (d.precipProb ?? 0) + '%</span>'
       + '</div>';
+
+    el.addEventListener('click', () => showDayDetail(index));
     dailyList.appendChild(el);
   });
+}
+
+// ── Day Detail Modal ────────────────────────────────────────────────────────
+function showDayDetail(index) {
+  const day = cachedDaily[index];
+  if (!day) return;
+
+  // Format date nicely
+  const date = new Date(day.time + 'T12:00:00');
+  const dateStr = date.toLocaleDateString('sv-SE', { weekday: 'long', day: 'numeric', month: 'long' });
+  dayTitle.textContent = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+  // Filter hourly data for this day
+  const dayHours = cachedHourly.filter(h => h.time.startsWith(day.time));
+
+  // Summary stats
+  const avgWind = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.wind, 0) / dayHours.length) : day.wind;
+  const avgHumidity = dayHours.length ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length) : 0;
+  const totalPrecip = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
+  const mainWindDir = dayHours.length ? dayHours[Math.floor(dayHours.length / 2)].windDir : '';
+
+  daySummary.innerHTML =
+      '<div class="day-detail-stat"><div class="day-detail-stat-label">🌡️ Temperatur</div><div class="day-detail-stat-value">' + day.tempMin + '° / ' + day.tempMax + '°</div></div>'
+    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💨 Vind</div><div class="day-detail-stat-value">' + avgWind + ' m/s ' + mainWindDir + '</div></div>'
+    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💧 Nederbörd</div><div class="day-detail-stat-value">' + totalPrecip + ' mm (' + day.precipProb + '%)</div></div>'
+    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💦 Luftfuktighet</div><div class="day-detail-stat-value">' + avgHumidity + '%</div></div>';
+
+  // Hourly breakdown
+  if (dayHours.length) {
+    dayHourly.innerHTML =
+        '<div class="day-detail-hourly-title">Timprognos</div>'
+      + '<div class="day-detail-hourly-grid">'
+      + dayHours.map(h =>
+          '<div class="day-detail-hour">'
+        + '<div class="day-detail-hour-time">' + fmtTime(h.time) + '</div>'
+        + '<div class="day-detail-hour-icon">' + h.icon + '</div>'
+        + '<div class="day-detail-hour-temp">' + h.temp + '°</div>'
+        + '<div class="day-detail-hour-detail">💨 ' + h.wind + '</div>'
+        + '<div class="day-detail-hour-detail">💧 ' + h.precipMm + 'mm</div>'
+        + '</div>'
+        ).join('')
+      + '</div>';
+  } else {
+    dayHourly.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center">Ingen timdata tillgänglig</div>';
+  }
+
+  dayModal.classList.add('active');
+}
+
+function hideDayDetail() {
+  dayModal.classList.remove('active');
 }
 
 // ── UI Helpers ─────────────────────────────────────────────────────────────
@@ -658,6 +727,12 @@ document.addEventListener('click', e => {
   if (!searchInput.contains(e.target) && !searchSuggest.contains(e.target)) {
     hideSuggestions();
   }
+});
+
+// Day detail modal event listeners
+dayClose.addEventListener('click', hideDayDetail);
+dayModal.addEventListener('click', e => {
+  if (e.target === dayModal) hideDayDetail();
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
