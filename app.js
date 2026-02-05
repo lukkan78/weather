@@ -34,7 +34,6 @@ const dayHourly      = $('dayDetailHourly');
 const dayClose       = $('dayDetailClose');
 const recentLoc      = $('recentLocation');
 const recentBtn      = $('recentBtn');
-const compareBtn     = $('compareBtn');
 const compareModal   = $('compareModal');
 const compareBody    = $('compareBody');
 const compareClose   = $('compareClose');
@@ -496,6 +495,43 @@ function calcEnsemble(results) {
       };
     });
 
+  // ── Ensemble för dagsprognos ──────────────────────────────────────────────
+  // Aggregera timdata per dag för att få ensemble på dagsnivå
+  const dailyByDate = new Map();
+  ensembleHourly.forEach(h => {
+    const date = h.time.slice(0, 10); // "2024-01-15"
+    if (!dailyByDate.has(date)) {
+      dailyByDate.set(date, { temps: [], winds: [], precips: [], humids: [] });
+    }
+    const entry = dailyByDate.get(date);
+    entry.temps.push(h.temp);
+    entry.winds.push(h.wind);
+    entry.precips.push(h.precipMm);
+    entry.humids.push(h.humidity);
+  });
+
+  // Slå ihop med Open-Meteo:s dagsprognos (som har icon och precipProb)
+  const ensembleDaily = (primary.daily || []).map(d => {
+    const hourlyData = dailyByDate.get(d.time);
+    if (hourlyData && hourlyData.temps.length >= 4) {
+      // Har tillräckligt med timdata för att ensembla
+      const allTemps = hourlyData.temps;
+      const avgTempMin = round1(Math.min(...allTemps));
+      const avgTempMax = round1(Math.max(...allTemps));
+      const avgWind = round1(avg(hourlyData.winds));
+      const totalPrecip = round1(hourlyData.precips.reduce((a, b) => a + b, 0));
+      return {
+        ...d,
+        tempMin: round1((d.tempMin + avgTempMin) / 2),  // Snitt av Open-Meteo och timdata
+        tempMax: round1((d.tempMax + avgTempMax) / 2),
+        wind:    round1((d.wind + avgWind) / 2),
+        precip:  round1((d.precip + totalPrecip) / 2),
+        sources: 2,  // Markera att vi har ensemble
+      };
+    }
+    return { ...d, sources: 1 };
+  });
+
   return {
     current: {
       temp:     round1(avgTemp),
@@ -508,7 +544,7 @@ function calcEnsemble(results) {
     },
     confidence: { pct, cls, label },
     hourly:  ensembleHourly.length ? ensembleHourly : primary.hourly,
-    daily:   primary.daily,
+    daily:   ensembleDaily.length ? ensembleDaily : primary.daily,
     sources: ok.length,
     stdDevs: { temp: round1(tempStdDev), wind: round1(windStdDev), humid: round1(humidStdDev) },
   };
@@ -533,6 +569,7 @@ function renderSources(results) {
   results.forEach(r => {
     const card = document.createElement('div');
     card.className = 'source-card';
+    card.style.cursor = 'pointer';
     card.innerHTML = r.status === 'ok'
       ? '<div class="source-name">'  + r.source + '</div>'
       + '<div class="source-temp">'  + r.current.temp + '°C</div>'
@@ -542,6 +579,7 @@ function renderSources(results) {
       + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
       + '<div class="source-details">' + (r.error || 'Misslyckades') + '</div>'
       + '<span class="source-status status-error">Fel</span>';
+    card.addEventListener('click', showCompareModal);
     sourcesGrid.appendChild(card);
   });
 }
@@ -667,79 +705,47 @@ function showCompareModal() {
   const ok = cachedResults.filter(r => r.status === 'ok');
   const failed = cachedResults.filter(r => r.status !== 'ok');
 
-  // Beräkna ensemble-värden för jämförelse
+  // Beräkna ensemble-värden
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
   const ensTemp = round1(avg(ok.map(r => r.current.temp)));
   const ensWind = round1(avg(ok.map(r => r.current.wind)));
   const ensHumid = Math.round(avg(ok.map(r => r.current.humidity)));
   const ensPrecip = round1(avg(ok.map(r => r.current.precip)));
 
-  let html = '<table class="compare-table">';
-  html += '<thead><tr><th>Parameter</th>';
-  ok.forEach(r => { html += '<th>' + r.source + '</th>'; });
-  html += '<th class="compare-ensemble">Ensemble</th></tr></thead>';
-  html += '<tbody>';
+  // Bygg kort för varje källa + ensemble
+  let html = '<div class="compare-cards">';
 
-  // Temperatur
-  html += '<tr><td>🌡️ Temperatur</td>';
+  // Ensemble-kort först
+  html += '<div class="compare-card compare-card-ensemble">';
+  html += '<div class="compare-card-title">Ensemble</div>';
+  html += '<div class="compare-card-temp">' + ensTemp + '°</div>';
+  html += '<div class="compare-card-row">💨 ' + ensWind + ' m/s</div>';
+  html += '<div class="compare-card-row">💦 ' + ensHumid + '%</div>';
+  html += '<div class="compare-card-row">🌧️ ' + ensPrecip + ' mm</div>';
+  html += '</div>';
+
+  // Kort för varje källa
   ok.forEach(r => {
-    const diff = Math.abs(r.current.temp - ensTemp);
-    const diffClass = diff > 2 ? 'high' : diff > 1 ? 'medium' : 'low';
-    html += '<td class="compare-value">' + r.current.temp + '°C <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
-  });
-  html += '<td class="compare-ensemble">' + ensTemp + '°C</td></tr>';
-
-  // Vind
-  html += '<tr><td>💨 Vind</td>';
-  ok.forEach(r => {
-    const diff = Math.abs(r.current.wind - ensWind);
-    const diffClass = diff > 3 ? 'high' : diff > 1.5 ? 'medium' : 'low';
-    html += '<td class="compare-value">' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
-  });
-  html += '<td class="compare-ensemble">' + ensWind + ' m/s</td></tr>';
-
-  // Luftfuktighet
-  html += '<tr><td>💦 Luftfuktighet</td>';
-  ok.forEach(r => {
-    const diff = Math.abs(r.current.humidity - ensHumid);
-    const diffClass = diff > 15 ? 'high' : diff > 7 ? 'medium' : 'low';
-    html += '<td class="compare-value">' + r.current.humidity + '% <span class="compare-diff ' + diffClass + '">(±' + Math.round(diff) + ')</span></td>';
-  });
-  html += '<td class="compare-ensemble">' + ensHumid + '%</td></tr>';
-
-  // Nederbörd
-  html += '<tr><td>🌧️ Nederbörd</td>';
-  ok.forEach(r => {
-    const diff = Math.abs(r.current.precip - ensPrecip);
-    const diffClass = diff > 2 ? 'high' : diff > 0.5 ? 'medium' : 'low';
-    html += '<td class="compare-value">' + r.current.precip + ' mm <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
-  });
-  html += '<td class="compare-ensemble">' + ensPrecip + ' mm</td></tr>';
-
-  // Väderikon
-  html += '<tr><td>🌤️ Vädertyp</td>';
-  ok.forEach(r => {
-    html += '<td class="compare-value">' + r.current.icon + ' ' + r.current.desc + '</td>';
-  });
-  html += '<td class="compare-ensemble compare-value-muted">–</td></tr>';
-
-  html += '</tbody></table>';
-
-  // Visa misslyckade källor
-  if (failed.length) {
-    html += '<div style="margin-top:20px;padding:16px;background:rgba(248,113,113,0.1);border-radius:8px">';
-    html += '<div style="color:var(--confidence-low);font-weight:600;margin-bottom:8px">Misslyckade källor:</div>';
-    failed.forEach(r => {
-      html += '<div style="color:var(--text-secondary)">' + r.source + ': ' + (r.error || 'Okänt fel') + '</div>';
-    });
+    html += '<div class="compare-card">';
+    html += '<div class="compare-card-title">' + r.source + '</div>';
+    html += '<div class="compare-card-icon">' + r.current.icon + '</div>';
+    html += '<div class="compare-card-temp">' + r.current.temp + '°</div>';
+    html += '<div class="compare-card-row">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</div>';
+    html += '<div class="compare-card-row">💦 ' + r.current.humidity + '%</div>';
+    html += '<div class="compare-card-row">🌧️ ' + r.current.precip + ' mm</div>';
+    html += '<div class="compare-card-desc">' + r.current.desc + '</div>';
     html += '</div>';
-  }
+  });
 
-  // Info om ensemble-metod
-  html += '<div style="margin-top:20px;padding:16px;background:var(--bg-deep);border-radius:8px;font-size:0.9rem;color:var(--text-secondary)">';
-  html += '<strong>Om ensemble-prognosen:</strong> Medelvärdet av alla tillgängliga källor. ';
-  html += 'Färgkodning visar avvikelse från ensemble: <span class="compare-diff low">grön (liten)</span>, ';
-  html += '<span class="compare-diff medium">gul (medel)</span>, <span class="compare-diff high">röd (stor)</span>.';
+  // Misslyckade källor
+  failed.forEach(r => {
+    html += '<div class="compare-card compare-card-failed">';
+    html += '<div class="compare-card-title">' + r.source + '</div>';
+    html += '<div class="compare-card-error">Kunde inte hämta data</div>';
+    html += '</div>';
+  });
+
+  html += '</div>';
   html += '</div>';
 
   compareBody.innerHTML = html;
@@ -964,7 +970,6 @@ dayModal.addEventListener('click', e => {
 });
 
 // Compare modal event listeners
-compareBtn.addEventListener('click', showCompareModal);
 compareClose.addEventListener('click', hideCompareModal);
 compareModal.addEventListener('click', e => {
   if (e.target === compareModal) hideCompareModal();
