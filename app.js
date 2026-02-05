@@ -32,6 +32,12 @@ const dayTitle       = $('dayDetailTitle');
 const daySummary     = $('dayDetailSummary');
 const dayHourly      = $('dayDetailHourly');
 const dayClose       = $('dayDetailClose');
+const recentLoc      = $('recentLocation');
+const recentBtn      = $('recentBtn');
+const compareBtn     = $('compareBtn');
+const compareModal   = $('compareModal');
+const compareBody    = $('compareBody');
+const compareClose   = $('compareClose');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -40,6 +46,7 @@ let selectedSuggest  = -1;
 let suggestions      = [];
 let cachedHourly     = [];
 let cachedDaily      = [];
+let cachedResults    = [];  // För jämförelse-modal
 
 // ── WMO Weather Codes → [dayIcon, nightIcon, Swedish label] ───────────────
 const WMO = {
@@ -336,10 +343,14 @@ async function fetchYR(lat, lon) {
       const det = e.data?.instant?.details || {};
       const n1  = e.data?.next_1hours      || {};
       return {
-        time:   e.time,
-        temp:   round1(det.air_temperature ?? 0),
-        icon:   yrIco(n1.summary?.symbol_code),
-        precip: n1.details?.precipitation_probability ?? 0,
+        time:     e.time,
+        temp:     round1(det.air_temperature ?? 0),
+        icon:     yrIco(n1.summary?.symbol_code),
+        precip:   n1.details?.precipitation_probability ?? 0,
+        precipMm: round1(n1.details?.precipitation_amount ?? 0),
+        wind:     round1(det.wind_speed ?? 0),
+        windDir:  degToDir(det.wind_from_direction),
+        humidity: det.relative_humidity ?? 0,
       };
     }),
     daily: [],   // YR has no ready-made daily summary endpoint
@@ -399,6 +410,9 @@ function calcEnsemble(results) {
     return Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
   };
 
+  // Hjälpfunktion för medelvärde
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
   // Extrahera alla parametrar
   const temps     = ok.map(r => r.current.temp);
   const winds     = ok.map(r => r.current.wind);
@@ -407,11 +421,11 @@ function calcEnsemble(results) {
   const precips   = ok.map(r => r.current.precip);
 
   // Beräkna medelvärden
-  const avgTemp   = temps.reduce((a, b) => a + b, 0) / temps.length;
-  const avgWind   = winds.reduce((a, b) => a + b, 0) / winds.length;
+  const avgTemp   = avg(temps);
+  const avgWind   = avg(winds);
   const avgWindDeg= circularMean(windDegs);
-  const avgHumid  = humidities.reduce((a, b) => a + b, 0) / humidities.length;
-  const avgPrecip = precips.reduce((a, b) => a + b, 0) / precips.length;
+  const avgHumid  = avg(humidities);
+  const avgPrecip = avg(precips);
 
   // Beräkna standardavvikelser för konfidensberäkning
   const tempStdDev  = calcStdDev(temps);
@@ -419,20 +433,14 @@ function calcEnsemble(results) {
   const humidStdDev = calcStdDev(humidities);
 
   // Kombinerad konfidensberäkning baserad på flera parametrar
-  // Viktar temperatur högst, sedan vind, sedan luftfuktighet
-  // Lägre standardavvikelse = högre konfidens (bättre överensstämmelse)
   let pct;
   if (ok.length === 1) {
     pct = 75; // En källa → medelhög konfidens
   } else {
-    // Normaliserade poängavdrag för varje parameters spridning
-    const tempPenalty  = Math.min(tempStdDev * 15, 40);   // Max 40p avdrag för temp
-    const windPenalty  = Math.min(windStdDev * 8, 25);    // Max 25p avdrag för vind
-    const humidPenalty = Math.min(humidStdDev * 0.5, 15); // Max 15p avdrag för fukt
-
-    // Bonus för fler källor (bättre coverage)
-    const sourceBonus = (ok.length - 2) * 5; // +5p för varje källa utöver 2
-
+    const tempPenalty  = Math.min(tempStdDev * 15, 40);
+    const windPenalty  = Math.min(windStdDev * 8, 25);
+    const humidPenalty = Math.min(humidStdDev * 0.5, 15);
+    const sourceBonus = (ok.length - 2) * 5;
     pct = Math.max(5, Math.min(100, Math.round(
       100 - tempPenalty - windPenalty - humidPenalty + sourceBonus
     )));
@@ -443,6 +451,50 @@ function calcEnsemble(results) {
 
   // Use Open-Meteo as primary for hourly/daily (best coverage) and icon/desc
   const primary = ok.find(r => r.source === 'Open-Meteo') || ok[0];
+
+  // ── Ensemble för timprognos ─────────────────────────────────────────────
+  // Slå ihop Open-Meteo och YR:s timdata där tidsstämplar matchar
+  const hourlyByTime = new Map();
+  ok.forEach(r => {
+    if (!r.hourly?.length) return;
+    r.hourly.forEach(h => {
+      // Normalisera tidsstämpel till timme (ta bort minuter/sekunder)
+      const key = h.time.slice(0, 13); // "2024-01-15T14"
+      if (!hourlyByTime.has(key)) {
+        hourlyByTime.set(key, { temps: [], winds: [], humids: [], precips: [], precipMms: [], primary: null });
+      }
+      const entry = hourlyByTime.get(key);
+      entry.temps.push(h.temp);
+      if (h.wind != null) entry.winds.push(h.wind);
+      if (h.humidity != null) entry.humids.push(h.humidity);
+      if (h.precip != null) entry.precips.push(h.precip);
+      if (h.precipMm != null) entry.precipMms.push(h.precipMm);
+      // Spara primary (Open-Meteo) för icon/desc
+      if (r.source === 'Open-Meteo' || !entry.primary) {
+        entry.primary = h;
+      }
+    });
+  });
+
+  // Bygg ensemble timprognos
+  const ensembleHourly = Array.from(hourlyByTime.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, data]) => {
+      const p = data.primary;
+      const sourceCount = data.temps.length;
+      return {
+        time:       p.time,
+        temp:       round1(avg(data.temps)),
+        icon:       p.icon,
+        desc:       p.desc,
+        precip:     data.precips.length ? Math.round(avg(data.precips)) : (p.precip ?? 0),
+        precipMm:   data.precipMms.length ? round1(avg(data.precipMms)) : (p.precipMm ?? 0),
+        wind:       data.winds.length ? round1(avg(data.winds)) : (p.wind ?? 0),
+        windDir:    p.windDir,
+        humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
+        sources:    sourceCount,  // Antal källor för denna timme
+      };
+    });
 
   return {
     current: {
@@ -455,9 +507,8 @@ function calcEnsemble(results) {
       desc:     primary.current.desc,
     },
     confidence: { pct, cls, label },
-    hourly:  primary.hourly,
+    hourly:  ensembleHourly.length ? ensembleHourly : primary.hourly,
     daily:   primary.daily,
-    // Inkludera debug-info för transparens
     sources: ok.length,
     stdDevs: { temp: round1(tempStdDev), wind: round1(windStdDev), humid: round1(humidStdDev) },
   };
@@ -609,6 +660,121 @@ function hideDayDetail() {
   dayModal.classList.remove('active');
 }
 
+// ── Compare Sources Modal ──────────────────────────────────────────────────
+function showCompareModal() {
+  if (!cachedResults.length) return;
+
+  const ok = cachedResults.filter(r => r.status === 'ok');
+  const failed = cachedResults.filter(r => r.status !== 'ok');
+
+  // Beräkna ensemble-värden för jämförelse
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const ensTemp = round1(avg(ok.map(r => r.current.temp)));
+  const ensWind = round1(avg(ok.map(r => r.current.wind)));
+  const ensHumid = Math.round(avg(ok.map(r => r.current.humidity)));
+  const ensPrecip = round1(avg(ok.map(r => r.current.precip)));
+
+  let html = '<table class="compare-table">';
+  html += '<thead><tr><th>Parameter</th>';
+  ok.forEach(r => { html += '<th>' + r.source + '</th>'; });
+  html += '<th class="compare-ensemble">Ensemble</th></tr></thead>';
+  html += '<tbody>';
+
+  // Temperatur
+  html += '<tr><td>🌡️ Temperatur</td>';
+  ok.forEach(r => {
+    const diff = Math.abs(r.current.temp - ensTemp);
+    const diffClass = diff > 2 ? 'high' : diff > 1 ? 'medium' : 'low';
+    html += '<td class="compare-value">' + r.current.temp + '°C <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
+  });
+  html += '<td class="compare-ensemble">' + ensTemp + '°C</td></tr>';
+
+  // Vind
+  html += '<tr><td>💨 Vind</td>';
+  ok.forEach(r => {
+    const diff = Math.abs(r.current.wind - ensWind);
+    const diffClass = diff > 3 ? 'high' : diff > 1.5 ? 'medium' : 'low';
+    html += '<td class="compare-value">' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
+  });
+  html += '<td class="compare-ensemble">' + ensWind + ' m/s</td></tr>';
+
+  // Luftfuktighet
+  html += '<tr><td>💦 Luftfuktighet</td>';
+  ok.forEach(r => {
+    const diff = Math.abs(r.current.humidity - ensHumid);
+    const diffClass = diff > 15 ? 'high' : diff > 7 ? 'medium' : 'low';
+    html += '<td class="compare-value">' + r.current.humidity + '% <span class="compare-diff ' + diffClass + '">(±' + Math.round(diff) + ')</span></td>';
+  });
+  html += '<td class="compare-ensemble">' + ensHumid + '%</td></tr>';
+
+  // Nederbörd
+  html += '<tr><td>🌧️ Nederbörd</td>';
+  ok.forEach(r => {
+    const diff = Math.abs(r.current.precip - ensPrecip);
+    const diffClass = diff > 2 ? 'high' : diff > 0.5 ? 'medium' : 'low';
+    html += '<td class="compare-value">' + r.current.precip + ' mm <span class="compare-diff ' + diffClass + '">(±' + round1(diff) + ')</span></td>';
+  });
+  html += '<td class="compare-ensemble">' + ensPrecip + ' mm</td></tr>';
+
+  // Väderikon
+  html += '<tr><td>🌤️ Vädertyp</td>';
+  ok.forEach(r => {
+    html += '<td class="compare-value">' + r.current.icon + ' ' + r.current.desc + '</td>';
+  });
+  html += '<td class="compare-ensemble compare-value-muted">–</td></tr>';
+
+  html += '</tbody></table>';
+
+  // Visa misslyckade källor
+  if (failed.length) {
+    html += '<div style="margin-top:20px;padding:16px;background:rgba(248,113,113,0.1);border-radius:8px">';
+    html += '<div style="color:var(--confidence-low);font-weight:600;margin-bottom:8px">Misslyckade källor:</div>';
+    failed.forEach(r => {
+      html += '<div style="color:var(--text-secondary)">' + r.source + ': ' + (r.error || 'Okänt fel') + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Info om ensemble-metod
+  html += '<div style="margin-top:20px;padding:16px;background:var(--bg-deep);border-radius:8px;font-size:0.9rem;color:var(--text-secondary)">';
+  html += '<strong>Om ensemble-prognosen:</strong> Medelvärdet av alla tillgängliga källor. ';
+  html += 'Färgkodning visar avvikelse från ensemble: <span class="compare-diff low">grön (liten)</span>, ';
+  html += '<span class="compare-diff medium">gul (medel)</span>, <span class="compare-diff high">röd (stor)</span>.';
+  html += '</div>';
+
+  compareBody.innerHTML = html;
+  compareModal.classList.add('active');
+}
+
+function hideCompareModal() {
+  compareModal.classList.remove('active');
+}
+
+// ── Recent Location ────────────────────────────────────────────────────────
+function updateRecentLocation() {
+  try {
+    const recent = JSON.parse(localStorage.getItem('väder_recent'));
+    if (recent && recent.name) {
+      // Visa bara om det inte redan är aktuell plats
+      if (!lastLoc || recent.name !== lastLoc.name) {
+        recentBtn.textContent = recent.name.split(',')[0]; // Första delen av namnet
+        recentLoc.style.display = 'flex';
+      } else {
+        recentLoc.style.display = 'none';
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+function loadRecentLocation() {
+  try {
+    const recent = JSON.parse(localStorage.getItem('väder_recent'));
+    if (recent) {
+      fetchWeather(recent.lat, recent.lon, recent.name);
+    }
+  } catch { /* ignore */ }
+}
+
 // ── UI Helpers ─────────────────────────────────────────────────────────────
 function showLoading(on) { loadingOverlay.classList.toggle('active', on); }
 function showError(msg)  { errorMsg.textContent = msg; errorMsg.classList.add('active'); }
@@ -639,6 +805,8 @@ async function fetchWeather(lat, lon, name) {
     locationName.textContent   = name;
     locationCoords.textContent = lat.toFixed(4) + '°, ' + lon.toFixed(4) + '°';
 
+    cachedResults = results;  // Spara för jämförelse-modal
+
     renderCurrent(ens);
     renderSources(results);
     renderHourly(ens.hourly);
@@ -647,12 +815,17 @@ async function fetchWeather(lat, lon, name) {
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
 
-    // Persist for offline
+    // Persist for offline + recent location
     try {
       localStorage.setItem('väder_cache', JSON.stringify({
         loc: lastLoc, results, ens, ts: Date.now()
       }));
+      // Spara senaste plats separat (för snabbval)
+      localStorage.setItem('väder_recent', JSON.stringify(lastLoc));
     } catch { /* localStorage full */ }
+
+    // Uppdatera senaste plats-knappen
+    updateRecentLocation();
 
   } catch (err) {
     showError(err.message);
@@ -668,6 +841,7 @@ function loadCache() {
     if (!c || Date.now() - c.ts > 7200000) return;   // max 2 h stale
 
     lastLoc = c.loc;
+    cachedResults = c.results;  // Återställ för jämförelse-modal
     locationName.textContent   = c.loc.name;
     locationCoords.textContent = c.loc.lat.toFixed(4) + '°, ' + c.loc.lon.toFixed(4) + '°';
     renderCurrent(c.ens);
@@ -789,8 +963,21 @@ dayModal.addEventListener('click', e => {
   if (e.target === dayModal) hideDayDetail();
 });
 
+// Compare modal event listeners
+compareBtn.addEventListener('click', showCompareModal);
+compareClose.addEventListener('click', hideCompareModal);
+compareModal.addEventListener('click', e => {
+  if (e.target === compareModal) hideCompareModal();
+});
+
+// Recent location event listener
+recentBtn.addEventListener('click', loadRecentLocation);
+
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!navigator.onLine) {
   offlineInd.classList.add('active');
   loadCache();
 }
+
+// Visa senaste plats vid start
+updateRecentLocation();
