@@ -109,6 +109,19 @@ function degToDir(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
+// Cirkulärt medelvärde för vinklar (grader) – hanterar 0°/360° wrap-around
+function circularMean(angles) {
+  const valid = angles.filter(a => a != null && !isNaN(a));
+  if (!valid.length) return null;
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const sumSin = valid.reduce((s, a) => s + Math.sin(toRad(a)), 0);
+  const sumCos = valid.reduce((s, a) => s + Math.cos(toRad(a)), 0);
+  let mean = toDeg(Math.atan2(sumSin / valid.length, sumCos / valid.length));
+  if (mean < 0) mean += 360;
+  return Math.round(mean);
+}
+
 // Extract HH:MM straight from the ISO string – avoids JS Date TZ quirks.
 // Works for both "2024-01-15T14:00" and "2024-01-15T14:00:00+01:00".
 function fmtTime(iso) {
@@ -252,6 +265,7 @@ async function fetchOpenMeteo(lat, lon) {
     current: {
       temp:     round1(cur.temperature),
       wind:     round1(cur.windspeed),
+      windDeg:  cur.winddirection,
       windDir:  degToDir(cur.winddirection),
       humidity: d.hourly.relative_humidity_2m[idx] ?? 0,
       precip:   round1(d.hourly.precipitation[idx] ?? 0),
@@ -311,6 +325,7 @@ async function fetchYR(lat, lon) {
     current: {
       temp:     round1(inst.air_temperature      ?? 0),
       wind:     round1(inst.wind_speed           ?? 0),
+      windDeg:  inst.wind_from_direction         ?? null,
       windDir:  degToDir(inst.wind_from_direction),
       humidity: inst.relative_humidity           ?? 0,
       precip:   round1(next.details?.precipitation_amount ?? 0),
@@ -360,6 +375,7 @@ async function fetchSMHI(lat, lon) {
     current: {
       temp:     round1(c.t),
       wind:     round1(c.ws),
+      windDeg:  c.wd,
       windDir:  degToDir(c.wd),
       humidity: Math.round(c.r),
       precip:   round1(c.pmax),
@@ -376,36 +392,74 @@ function calcEnsemble(results) {
   const ok = results.filter(r => r.status === 'ok');
   if (!ok.length) throw new Error('Alla väderservicerna misslyckades');
 
-  const temps  = ok.map(r => r.current.temp);
-  const avg    = temps.reduce((a, b) => a + b, 0) / temps.length;
-  const stdDev = Math.sqrt(
-    temps.reduce((s, t) => s + (t - avg) ** 2, 0) / temps.length
-  );
+  // Hjälpfunktion för standardavvikelse
+  const calcStdDev = (values) => {
+    if (values.length < 2) return 0;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
+  };
 
-  // Single source → assume medium-high; multiple → derive from std-dev
-  const pct   = ok.length === 1
-    ? 75
-    : Math.max(5, Math.min(100, Math.round(100 - stdDev * 20)));
+  // Extrahera alla parametrar
+  const temps     = ok.map(r => r.current.temp);
+  const winds     = ok.map(r => r.current.wind);
+  const windDegs  = ok.map(r => r.current.windDeg).filter(d => d != null);
+  const humidities= ok.map(r => r.current.humidity);
+  const precips   = ok.map(r => r.current.precip);
+
+  // Beräkna medelvärden
+  const avgTemp   = temps.reduce((a, b) => a + b, 0) / temps.length;
+  const avgWind   = winds.reduce((a, b) => a + b, 0) / winds.length;
+  const avgWindDeg= circularMean(windDegs);
+  const avgHumid  = humidities.reduce((a, b) => a + b, 0) / humidities.length;
+  const avgPrecip = precips.reduce((a, b) => a + b, 0) / precips.length;
+
+  // Beräkna standardavvikelser för konfidensberäkning
+  const tempStdDev  = calcStdDev(temps);
+  const windStdDev  = calcStdDev(winds);
+  const humidStdDev = calcStdDev(humidities);
+
+  // Kombinerad konfidensberäkning baserad på flera parametrar
+  // Viktar temperatur högst, sedan vind, sedan luftfuktighet
+  // Lägre standardavvikelse = högre konfidens (bättre överensstämmelse)
+  let pct;
+  if (ok.length === 1) {
+    pct = 75; // En källa → medelhög konfidens
+  } else {
+    // Normaliserade poängavdrag för varje parameters spridning
+    const tempPenalty  = Math.min(tempStdDev * 15, 40);   // Max 40p avdrag för temp
+    const windPenalty  = Math.min(windStdDev * 8, 25);    // Max 25p avdrag för vind
+    const humidPenalty = Math.min(humidStdDev * 0.5, 15); // Max 15p avdrag för fukt
+
+    // Bonus för fler källor (bättre coverage)
+    const sourceBonus = (ok.length - 2) * 5; // +5p för varje källa utöver 2
+
+    pct = Math.max(5, Math.min(100, Math.round(
+      100 - tempPenalty - windPenalty - humidPenalty + sourceBonus
+    )));
+  }
+
   const cls   = pct >= 70 ? 'confidence-high'   : pct >= 40 ? 'confidence-medium'   : 'confidence-low';
   const label = pct >= 70 ? 'Hög'               : pct >= 40 ? 'Måttlig'              : 'Låg';
 
-  // Use Open-Meteo as primary for hourly/daily (best coverage)
+  // Use Open-Meteo as primary for hourly/daily (best coverage) and icon/desc
   const primary = ok.find(r => r.source === 'Open-Meteo') || ok[0];
-  const winds   = ok.map(r => r.current.wind);
 
   return {
     current: {
-      temp:     round1(avg),
-      wind:     round1(winds.reduce((a, b) => a + b, 0) / winds.length),
-      windDir:  primary.current.windDir,
-      humidity: primary.current.humidity,
-      precip:   primary.current.precip,
+      temp:     round1(avgTemp),
+      wind:     round1(avgWind),
+      windDir:  avgWindDeg != null ? degToDir(avgWindDeg) : primary.current.windDir,
+      humidity: Math.round(avgHumid),
+      precip:   round1(avgPrecip),
       icon:     primary.current.icon,
       desc:     primary.current.desc,
     },
     confidence: { pct, cls, label },
     hourly:  primary.hourly,
     daily:   primary.daily,
+    // Inkludera debug-info för transparens
+    sources: ok.length,
+    stdDevs: { temp: round1(tempStdDev), wind: round1(windStdDev), humid: round1(humidStdDev) },
   };
 }
 
