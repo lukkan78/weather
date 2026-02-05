@@ -34,9 +34,6 @@ const dayHourly      = $('dayDetailHourly');
 const dayClose       = $('dayDetailClose');
 const recentLoc      = $('recentLocation');
 const recentBtn      = $('recentBtn');
-const compareModal   = $('compareModal');
-const compareBody    = $('compareBody');
-const compareClose   = $('compareClose');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -369,16 +366,34 @@ async function fetchSMHI(lat, lon) {
   const list = data.timeSeries ?? [];
   if (!list.length) throw new Error('SMHI: ingen data');
 
-  // Första tidpunkten, extrahera parametrar
+  // Hjälpfunktion för att extrahera parameter från en tidpunkt
+  const getParam = (params, name) => params.find(p => p.name === name)?.values?.[0] ?? 0;
+
+  // Första tidpunkten för current
   const params = list[0].parameters ?? [];
-  const get = name => params.find(p => p.name === name)?.values?.[0] ?? 0;
   const c = {
-    t: get('t'),           // temperatur
-    ws: get('ws'),         // vindhastighet
-    wd: get('wd'),         // vindriktning (grader)
-    r: get('r'),           // relativ luftfuktighet
-    pmax: get('pmax'),     // max nederbörd
+    t: getParam(params, 't'),           // temperatur
+    ws: getParam(params, 'ws'),         // vindhastighet
+    wd: getParam(params, 'wd'),         // vindriktning (grader)
+    r: getParam(params, 'r'),           // relativ luftfuktighet
+    pmax: getParam(params, 'pmax'),     // max nederbörd
   };
+
+  // Extrahera timdata (SMHI har ~72 timmar framåt)
+  const hourly = list.slice(0, 48).map(entry => {
+    const p = entry.parameters ?? [];
+    return {
+      time:     entry.validTime,
+      temp:     round1(getParam(p, 't')),
+      wind:     round1(getParam(p, 'ws')),
+      windDir:  degToDir(getParam(p, 'wd')),
+      humidity: Math.round(getParam(p, 'r')),
+      precipMm: round1(getParam(p, 'pmax')),
+      precip:   Math.round(getParam(p, 'pmax') > 0 ? 70 : 10), // Uppskattad sannolikhet
+      icon:     '🌤️',  // SMHI har inte lika bra ikoner
+    };
+  });
+
   return {
     source: 'SMHI',
     status: 'ok',
@@ -392,7 +407,7 @@ async function fetchSMHI(lat, lon) {
       icon:     '🌤️',
       desc:     'SMHI-prognos',
     },
-    hourly: [],
+    hourly: hourly,
     daily:  [],
   };
 }
@@ -566,20 +581,63 @@ function renderCurrent(ens) {
 
 function renderSources(results) {
   sourcesGrid.innerHTML = '';
+
+  // Beräkna ensemble-värden för jämförelse
+  const ok = results.filter(r => r.status === 'ok');
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const ensTemp = ok.length ? round1(avg(ok.map(r => r.current.temp))) : 0;
+  const ensWind = ok.length ? round1(avg(ok.map(r => r.current.wind))) : 0;
+  const ensHumid = ok.length ? Math.round(avg(ok.map(r => r.current.humidity))) : 0;
+  const ensPrecip = ok.length ? round1(avg(ok.map(r => r.current.precip))) : 0;
+
   results.forEach(r => {
     const card = document.createElement('div');
     card.className = 'source-card';
     card.style.cursor = 'pointer';
-    card.innerHTML = r.status === 'ok'
-      ? '<div class="source-name">'  + r.source + '</div>'
-      + '<div class="source-temp">'  + r.current.temp + '°C</div>'
-      + '<div class="source-details">💨 ' + r.current.wind + ' m/s&nbsp;&nbsp;' + (r.current.windDir || '') + ' &nbsp; 💧 ' + r.current.humidity + ' %</div>'
-      + '<span class="source-status status-ok">OK</span>'
-      : '<div class="source-name">'  + r.source + '</div>'
-      + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
-      + '<div class="source-details">' + (r.error || 'Misslyckades') + '</div>'
-      + '<span class="source-status status-error">Fel</span>';
-    card.addEventListener('click', showCompareModal);
+
+    if (r.status === 'ok') {
+      // Kompakt vy (standard)
+      const compact = '<div class="source-compact">'
+        + '<div class="source-name">' + r.source + '</div>'
+        + '<div class="source-temp">' + r.current.temp + '°C</div>'
+        + '<div class="source-details">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' · 💧 ' + r.current.humidity + '%</div>'
+        + '<span class="source-status status-ok">OK</span>'
+        + '</div>';
+
+      // Expanderad vy (visas vid klick)
+      const expanded = '<div class="source-expanded">'
+        + '<div class="source-expanded-header">'
+        + '<span class="source-name">' + r.source + '</span>'
+        + '<span class="source-close-hint">✕</span>'
+        + '</div>'
+        + '<div class="source-expanded-grid">'
+        + '<div class="source-expanded-item"><div class="source-expanded-label">🌡️ Temp</div><div class="source-expanded-value">' + r.current.temp + '°</div><div class="source-expanded-ens">Ens: ' + ensTemp + '°</div></div>'
+        + '<div class="source-expanded-item"><div class="source-expanded-label">💨 Vind</div><div class="source-expanded-value">' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</div><div class="source-expanded-ens">Ens: ' + ensWind + '</div></div>'
+        + '<div class="source-expanded-item"><div class="source-expanded-label">💦 Fukt</div><div class="source-expanded-value">' + r.current.humidity + '%</div><div class="source-expanded-ens">Ens: ' + ensHumid + '%</div></div>'
+        + '<div class="source-expanded-item"><div class="source-expanded-label">🌧️ Nbd</div><div class="source-expanded-value">' + r.current.precip + ' mm</div><div class="source-expanded-ens">Ens: ' + ensPrecip + '</div></div>'
+        + '</div>'
+        + '<div class="source-expanded-desc">' + r.current.icon + ' ' + r.current.desc + '</div>'
+        + '</div>';
+
+      card.innerHTML = compact + expanded;
+
+      card.addEventListener('click', () => {
+        // Stäng andra expanderade kort
+        document.querySelectorAll('.source-card.expanded').forEach(c => {
+          if (c !== card) c.classList.remove('expanded');
+        });
+        // Toggla detta kort
+        card.classList.toggle('expanded');
+      });
+    } else {
+      card.innerHTML = '<div class="source-compact">'
+        + '<div class="source-name">' + r.source + '</div>'
+        + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
+        + '<div class="source-details">' + (r.error || 'Misslyckades') + '</div>'
+        + '<span class="source-status status-error">Fel</span>'
+        + '</div>';
+    }
+
     sourcesGrid.appendChild(card);
   });
 }
@@ -696,64 +754,6 @@ function showDayDetail(index) {
 
 function hideDayDetail() {
   dayModal.classList.remove('active');
-}
-
-// ── Compare Sources Modal ──────────────────────────────────────────────────
-function showCompareModal() {
-  if (!cachedResults.length) return;
-
-  const ok = cachedResults.filter(r => r.status === 'ok');
-  const failed = cachedResults.filter(r => r.status !== 'ok');
-
-  // Beräkna ensemble-värden
-  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  const ensTemp = round1(avg(ok.map(r => r.current.temp)));
-  const ensWind = round1(avg(ok.map(r => r.current.wind)));
-  const ensHumid = Math.round(avg(ok.map(r => r.current.humidity)));
-  const ensPrecip = round1(avg(ok.map(r => r.current.precip)));
-
-  // Bygg kort för varje källa + ensemble
-  let html = '<div class="compare-cards">';
-
-  // Ensemble-kort först
-  html += '<div class="compare-card compare-card-ensemble">';
-  html += '<div class="compare-card-title">Ensemble</div>';
-  html += '<div class="compare-card-temp">' + ensTemp + '°</div>';
-  html += '<div class="compare-card-row">💨 ' + ensWind + ' m/s</div>';
-  html += '<div class="compare-card-row">💦 ' + ensHumid + '%</div>';
-  html += '<div class="compare-card-row">🌧️ ' + ensPrecip + ' mm</div>';
-  html += '</div>';
-
-  // Kort för varje källa
-  ok.forEach(r => {
-    html += '<div class="compare-card">';
-    html += '<div class="compare-card-title">' + r.source + '</div>';
-    html += '<div class="compare-card-icon">' + r.current.icon + '</div>';
-    html += '<div class="compare-card-temp">' + r.current.temp + '°</div>';
-    html += '<div class="compare-card-row">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</div>';
-    html += '<div class="compare-card-row">💦 ' + r.current.humidity + '%</div>';
-    html += '<div class="compare-card-row">🌧️ ' + r.current.precip + ' mm</div>';
-    html += '<div class="compare-card-desc">' + r.current.desc + '</div>';
-    html += '</div>';
-  });
-
-  // Misslyckade källor
-  failed.forEach(r => {
-    html += '<div class="compare-card compare-card-failed">';
-    html += '<div class="compare-card-title">' + r.source + '</div>';
-    html += '<div class="compare-card-error">Kunde inte hämta data</div>';
-    html += '</div>';
-  });
-
-  html += '</div>';
-  html += '</div>';
-
-  compareBody.innerHTML = html;
-  compareModal.classList.add('active');
-}
-
-function hideCompareModal() {
-  compareModal.classList.remove('active');
 }
 
 // ── Recent Location ────────────────────────────────────────────────────────
@@ -967,12 +967,6 @@ document.addEventListener('click', e => {
 dayClose.addEventListener('click', hideDayDetail);
 dayModal.addEventListener('click', e => {
   if (e.target === dayModal) hideDayDetail();
-});
-
-// Compare modal event listeners
-compareClose.addEventListener('click', hideCompareModal);
-compareModal.addEventListener('click', e => {
-  if (e.target === compareModal) hideCompareModal();
 });
 
 // Recent location event listener
