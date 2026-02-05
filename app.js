@@ -596,51 +596,56 @@ function renderSources(results) {
     card.style.cursor = 'pointer';
 
     if (r.status === 'ok') {
-      // Kompakt vy (standard)
-      const compact = '<div class="source-compact">'
-        + '<div class="source-name">' + r.source + '</div>'
+      card.innerHTML =
+          '<div class="source-name">' + r.source + '</div>'
         + '<div class="source-temp">' + r.current.temp + '°C</div>'
         + '<div class="source-details">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' · 💧 ' + r.current.humidity + '%</div>'
         + '<span class="source-status status-ok">OK</span>'
+        // Popup-meny som visas vid klick
+        + '<div class="source-popup">'
+        + '<div class="source-popup-header">' + r.source + '<span class="source-popup-close">✕</span></div>'
+        + '<div class="source-popup-icon">' + r.current.icon + '</div>'
+        + '<div class="source-popup-temp">' + r.current.temp + '°</div>'
+        + '<div class="source-popup-desc">' + r.current.desc + '</div>'
+        + '<div class="source-popup-divider"></div>'
+        + '<div class="source-popup-row"><span>💨 Vind</span><span>' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</span></div>'
+        + '<div class="source-popup-row"><span>💦 Luftfuktighet</span><span>' + r.current.humidity + '%</span></div>'
+        + '<div class="source-popup-row"><span>🌧️ Nederbörd</span><span>' + r.current.precip + ' mm</span></div>'
+        + '<div class="source-popup-divider"></div>'
+        + '<div class="source-popup-ensemble">'
+        + '<div class="source-popup-ens-title">Ensemble-snitt</div>'
+        + '<div class="source-popup-ens-row"><span>Temp</span><span>' + ensTemp + '°</span></div>'
+        + '<div class="source-popup-ens-row"><span>Vind</span><span>' + ensWind + ' m/s</span></div>'
+        + '<div class="source-popup-ens-row"><span>Fukt</span><span>' + ensHumid + '%</span></div>'
+        + '</div>'
         + '</div>';
 
-      // Expanderad vy (visas vid klick)
-      const expanded = '<div class="source-expanded">'
-        + '<div class="source-expanded-header">'
-        + '<span class="source-name">' + r.source + '</span>'
-        + '<span class="source-close-hint">✕</span>'
-        + '</div>'
-        + '<div class="source-expanded-grid">'
-        + '<div class="source-expanded-item"><div class="source-expanded-label">🌡️ Temp</div><div class="source-expanded-value">' + r.current.temp + '°</div><div class="source-expanded-ens">Ens: ' + ensTemp + '°</div></div>'
-        + '<div class="source-expanded-item"><div class="source-expanded-label">💨 Vind</div><div class="source-expanded-value">' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</div><div class="source-expanded-ens">Ens: ' + ensWind + '</div></div>'
-        + '<div class="source-expanded-item"><div class="source-expanded-label">💦 Fukt</div><div class="source-expanded-value">' + r.current.humidity + '%</div><div class="source-expanded-ens">Ens: ' + ensHumid + '%</div></div>'
-        + '<div class="source-expanded-item"><div class="source-expanded-label">🌧️ Nbd</div><div class="source-expanded-value">' + r.current.precip + ' mm</div><div class="source-expanded-ens">Ens: ' + ensPrecip + '</div></div>'
-        + '</div>'
-        + '<div class="source-expanded-desc">' + r.current.icon + ' ' + r.current.desc + '</div>'
-        + '</div>';
-
-      card.innerHTML = compact + expanded;
-
-      card.addEventListener('click', () => {
-        // Stäng andra expanderade kort
-        document.querySelectorAll('.source-card.expanded').forEach(c => {
-          if (c !== card) c.classList.remove('expanded');
+      card.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Stäng andra popups
+        document.querySelectorAll('.source-card.active').forEach(c => {
+          if (c !== card) c.classList.remove('active');
         });
-        // Toggla detta kort
-        card.classList.toggle('expanded');
+        card.classList.toggle('active');
       });
     } else {
-      card.innerHTML = '<div class="source-compact">'
-        + '<div class="source-name">' + r.source + '</div>'
+      card.innerHTML =
+          '<div class="source-name">' + r.source + '</div>'
         + '<div class="source-temp" style="color:var(--confidence-low)">–</div>'
         + '<div class="source-details">' + (r.error || 'Misslyckades') + '</div>'
-        + '<span class="source-status status-error">Fel</span>'
-        + '</div>';
+        + '<span class="source-status status-error">Fel</span>';
     }
 
     sourcesGrid.appendChild(card);
   });
 }
+
+// Stäng popup när man klickar utanför
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.source-card')) {
+    document.querySelectorAll('.source-card.active').forEach(c => c.classList.remove('active'));
+  }
+});
 
 function renderHourly(hourly) {
   hourlyScroll.innerHTML = '';
