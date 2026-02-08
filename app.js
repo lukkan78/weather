@@ -34,6 +34,8 @@ const dayHourly      = $('dayDetailHourly');
 const dayClose       = $('dayDetailClose');
 const recentLoc      = $('recentLocation');
 const recentBtn      = $('recentBtn');
+const sourcesSection = $('sourcesSection');
+const sourcesToggle  = $('sourcesToggle');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -582,52 +584,21 @@ function renderCurrent(ens) {
 function renderSources(results) {
   sourcesGrid.innerHTML = '';
 
-  // Beräkna ensemble-värden för jämförelse
-  const ok = results.filter(r => r.status === 'ok');
-  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  const ensTemp = ok.length ? round1(avg(ok.map(r => r.current.temp))) : 0;
-  const ensWind = ok.length ? round1(avg(ok.map(r => r.current.wind))) : 0;
-  const ensHumid = ok.length ? Math.round(avg(ok.map(r => r.current.humidity))) : 0;
-  const ensPrecip = ok.length ? round1(avg(ok.map(r => r.current.precip))) : 0;
-
   results.forEach(r => {
     const card = document.createElement('div');
     card.className = 'source-card';
-    card.style.cursor = 'pointer';
 
     if (r.status === 'ok') {
       card.innerHTML =
           '<div class="source-name">' + r.source + '</div>'
+        + '<div class="source-icon">' + r.current.icon + '</div>'
         + '<div class="source-temp">' + r.current.temp + '°C</div>'
-        + '<div class="source-details">💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + ' · 💧 ' + r.current.humidity + '%</div>'
-        + '<span class="source-status status-ok">OK</span>'
-        // Popup-meny som visas vid klick
-        + '<div class="source-popup">'
-        + '<div class="source-popup-header">' + r.source + '<span class="source-popup-close">✕</span></div>'
-        + '<div class="source-popup-icon">' + r.current.icon + '</div>'
-        + '<div class="source-popup-temp">' + r.current.temp + '°</div>'
-        + '<div class="source-popup-desc">' + r.current.desc + '</div>'
-        + '<div class="source-popup-divider"></div>'
-        + '<div class="source-popup-row"><span>💨 Vind</span><span>' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</span></div>'
-        + '<div class="source-popup-row"><span>💦 Luftfuktighet</span><span>' + r.current.humidity + '%</span></div>'
-        + '<div class="source-popup-row"><span>🌧️ Nederbörd</span><span>' + r.current.precip + ' mm</span></div>'
-        + '<div class="source-popup-divider"></div>'
-        + '<div class="source-popup-ensemble">'
-        + '<div class="source-popup-ens-title">Ensemble-snitt</div>'
-        + '<div class="source-popup-ens-row"><span>Temp</span><span>' + ensTemp + '°</span></div>'
-        + '<div class="source-popup-ens-row"><span>Vind</span><span>' + ensWind + ' m/s</span></div>'
-        + '<div class="source-popup-ens-row"><span>Fukt</span><span>' + ensHumid + '%</span></div>'
+        + '<div class="source-details">'
+        + '<div>💨 ' + r.current.wind + ' m/s ' + (r.current.windDir || '') + '</div>'
+        + '<div>💦 ' + r.current.humidity + '%</div>'
+        + '<div>🌧️ ' + r.current.precip + ' mm</div>'
         + '</div>'
-        + '</div>';
-
-      card.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Stäng andra popups
-        document.querySelectorAll('.source-card.active').forEach(c => {
-          if (c !== card) c.classList.remove('active');
-        });
-        card.classList.toggle('active');
-      });
+        + '<span class="source-status status-ok">OK</span>';
     } else {
       card.innerHTML =
           '<div class="source-name">' + r.source + '</div>'
@@ -639,13 +610,6 @@ function renderSources(results) {
     sourcesGrid.appendChild(card);
   });
 }
-
-// Stäng popup när man klickar utanför
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.source-card')) {
-    document.querySelectorAll('.source-card.active').forEach(c => c.classList.remove('active'));
-  }
-});
 
 function renderHourly(hourly) {
   hourlyScroll.innerHTML = '';
@@ -976,6 +940,11 @@ dayModal.addEventListener('click', e => {
 
 // Recent location event listener
 recentBtn.addEventListener('click', loadRecentLocation);
+
+// Sources section toggle (collapsible)
+sourcesToggle.addEventListener('click', () => {
+  sourcesSection.classList.toggle('open');
+});
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!navigator.onLine) {
