@@ -242,7 +242,7 @@ async function fetchOpenMeteo(lat, lon) {
     '&current_weather=true' +
     '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,weathercode' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,precipitation_probability_max,weathercode' +
-    '&timezone=auto&forecast_days=7' +
+    '&timezone=auto&forecast_days=16' +
     '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
 
   const res = await fetch(url);
@@ -337,7 +337,7 @@ async function fetchYR(lat, lon) {
       icon:     yrIco(sym),
       desc:     sym.replace(/_/g, ' '),
     },
-    hourly: ts.slice(0, 48).map(e => {
+    hourly: ts.slice(0, 216).map(e => {  // ~9 dagar timdata
       const det = e.data?.instant?.details || {};
       const n1  = e.data?.next_1hours      || {};
       return {
@@ -381,8 +381,8 @@ async function fetchSMHI(lat, lon) {
     pmax: getParam(params, 'pmax'),     // max nederbörd
   };
 
-  // Extrahera timdata (SMHI har ~72 timmar framåt)
-  const hourly = list.slice(0, 48).map(entry => {
+  // Extrahera timdata (SMHI har ~10 dagars data)
+  const hourly = list.map(entry => {  // Använd all tillgänglig data
     const p = entry.parameters ?? [];
     return {
       time:     entry.validTime,
@@ -513,23 +513,47 @@ function calcEnsemble(results) {
     });
 
   // ── Ensemble för dagsprognos ──────────────────────────────────────────────
-  // Aggregera timdata per dag för att få ensemble på dagsnivå
+  // Aggregera timdata per dag och källa för att få ensemble på dagsnivå
+  const dailyByDateSource = new Map();  // date -> source -> hourly data
+  ok.forEach(r => {
+    if (!r.hourly?.length) return;
+    r.hourly.forEach(h => {
+      const date = h.time.slice(0, 10);
+      if (!dailyByDateSource.has(date)) {
+        dailyByDateSource.set(date, new Map());
+      }
+      const dayData = dailyByDateSource.get(date);
+      if (!dayData.has(r.source)) {
+        dayData.set(r.source, { temps: [], winds: [], precips: [] });
+      }
+      const entry = dayData.get(r.source);
+      entry.temps.push(h.temp);
+      if (h.wind != null) entry.winds.push(h.wind);
+      if (h.precipMm != null) entry.precips.push(h.precipMm);
+    });
+  });
+
+  // Aggregera också från ensembleHourly för bakåtkompatibilitet
   const dailyByDate = new Map();
   ensembleHourly.forEach(h => {
-    const date = h.time.slice(0, 10); // "2024-01-15"
+    const date = h.time.slice(0, 10);
     if (!dailyByDate.has(date)) {
-      dailyByDate.set(date, { temps: [], winds: [], precips: [], humids: [] });
+      dailyByDate.set(date, { temps: [], winds: [], precips: [], humids: [], sourceCount: 0 });
     }
     const entry = dailyByDate.get(date);
     entry.temps.push(h.temp);
     entry.winds.push(h.wind);
     entry.precips.push(h.precipMm);
     entry.humids.push(h.humidity);
+    entry.sourceCount = Math.max(entry.sourceCount, h.sources || 1);
   });
 
   // Slå ihop med Open-Meteo:s dagsprognos (som har icon och precipProb)
   const ensembleDaily = (primary.daily || []).map(d => {
     const hourlyData = dailyByDate.get(d.time);
+    const sourceData = dailyByDateSource.get(d.time);
+    const sourceCount = sourceData ? sourceData.size : 1;
+
     if (hourlyData && hourlyData.temps.length >= 4) {
       // Har tillräckligt med timdata för att ensembla
       const allTemps = hourlyData.temps;
@@ -537,16 +561,19 @@ function calcEnsemble(results) {
       const avgTempMax = round1(Math.max(...allTemps));
       const avgWind = round1(avg(hourlyData.winds));
       const totalPrecip = round1(hourlyData.precips.reduce((a, b) => a + b, 0));
+
+      // Vikta baserat på antal källor
+      const weight = sourceCount > 1 ? 0.5 : 0.3;
       return {
         ...d,
-        tempMin: round1((d.tempMin + avgTempMin) / 2),  // Snitt av Open-Meteo och timdata
-        tempMax: round1((d.tempMax + avgTempMax) / 2),
-        wind:    round1((d.wind + avgWind) / 2),
-        precip:  round1((d.precip + totalPrecip) / 2),
-        sources: 2,  // Markera att vi har ensemble
+        tempMin: round1(d.tempMin * (1 - weight) + avgTempMin * weight),
+        tempMax: round1(d.tempMax * (1 - weight) + avgTempMax * weight),
+        wind:    round1(d.wind * (1 - weight) + avgWind * weight),
+        precip:  round1(d.precip * (1 - weight) + totalPrecip * weight),
+        sources: sourceCount,
       };
     }
-    return { ...d, sources: 1 };
+    return { ...d, sources: sourceCount };
   });
 
   return {
