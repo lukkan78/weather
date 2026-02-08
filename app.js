@@ -36,6 +36,13 @@ const recentLoc      = $('recentLocation');
 const recentBtn      = $('recentBtn');
 const sourcesSection = $('sourcesSection');
 const sourcesToggle  = $('sourcesToggle');
+const refreshBtn     = $('refreshBtn');
+const currentFeels   = $('currentFeelsLike');
+const currentPressure= $('currentPressure');
+const currentGust    = $('currentGust');
+const warningsSection= $('warningsSection');
+const airQualitySection = $('airQualitySection');
+const forecastText   = $('forecastText');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -240,8 +247,8 @@ async function fetchOpenMeteo(lat, lon) {
     'https://api.open-meteo.com/v1/forecast?' +
     'latitude='  + lat  + '&longitude=' + lon +
     '&current_weather=true' +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,weathercode' +
-    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,precipitation_probability_max,weathercode' +
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,windgusts_10m,pressure_msl,weathercode' +
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,precipitation_probability_max,weathercode' +
     '&timezone=auto&forecast_days=16' +
     '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
 
@@ -272,7 +279,9 @@ async function fetchOpenMeteo(lat, lon) {
       wind:     round1(cur.windspeed),
       windDeg:  cur.winddirection,
       windDir:  degToDir(cur.winddirection),
+      windGust: round1(d.hourly.windgusts_10m?.[idx] ?? 0),
       humidity: d.hourly.relative_humidity_2m[idx] ?? 0,
+      pressure: Math.round(d.hourly.pressure_msl?.[idx] ?? 0),
       precip:   round1(d.hourly.precipitation[idx] ?? 0),
       icon:     wmo(cur.weathercode, isDay).icon,
       desc:     wmo(cur.weathercode, isDay).desc,
@@ -287,8 +296,10 @@ async function fetchOpenMeteo(lat, lon) {
         precip:     d.hourly.precipitation_probability?.[i] ?? 0,
         precipMm:   round1(d.hourly.precipitation?.[i] ?? 0),
         wind:       round1(d.hourly.windspeed_10m?.[i] ?? 0),
+        windGust:   round1(d.hourly.windgusts_10m?.[i] ?? 0),
         windDir:    degToDir(d.hourly.winddirection_10m?.[i]),
         humidity:   d.hourly.relative_humidity_2m?.[i] ?? 0,
+        pressure:   Math.round(d.hourly.pressure_msl?.[i] ?? 0),
       };
     }),
     daily: d.daily.time.map((t, i) => ({
@@ -298,6 +309,7 @@ async function fetchOpenMeteo(lat, lon) {
       precip:     round1(d.daily.precipitation_sum?.[i] ?? 0),
       precipProb: d.daily.precipitation_probability_max?.[i] ?? 0,
       wind:       round1(d.daily.windspeed_10m_max?.[i] ?? 0),
+      windGust:   round1(d.daily.windgusts_10m_max?.[i] ?? 0),
       icon:       wmo(d.daily.weathercode?.[i] ?? 0, true).icon,
     })),
   };
@@ -332,7 +344,9 @@ async function fetchYR(lat, lon) {
       wind:     round1(inst.wind_speed           ?? 0),
       windDeg:  inst.wind_from_direction         ?? null,
       windDir:  degToDir(inst.wind_from_direction),
+      windGust: round1(inst.wind_speed_of_gust   ?? 0),
       humidity: inst.relative_humidity           ?? 0,
+      pressure: Math.round(inst.air_pressure_at_sea_level ?? 0),
       precip:   round1(next.details?.precipitation_amount ?? 0),
       icon:     yrIco(sym),
       desc:     sym.replace(/_/g, ' '),
@@ -347,8 +361,10 @@ async function fetchYR(lat, lon) {
         precip:   n1.details?.precipitation_probability ?? 0,
         precipMm: round1(n1.details?.precipitation_amount ?? 0),
         wind:     round1(det.wind_speed ?? 0),
+        windGust: round1(det.wind_speed_of_gust ?? 0),
         windDir:  degToDir(det.wind_from_direction),
         humidity: det.relative_humidity ?? 0,
+        pressure: Math.round(det.air_pressure_at_sea_level ?? 0),
       };
     }),
     daily: [],   // YR has no ready-made daily summary endpoint
@@ -374,10 +390,12 @@ async function fetchSMHI(lat, lon) {
   // Första tidpunkten för current
   const params = list[0].parameters ?? [];
   const c = {
-    t: getParam(params, 't'),           // temperatur
-    ws: getParam(params, 'ws'),         // vindhastighet
-    wd: getParam(params, 'wd'),         // vindriktning (grader)
-    r: getParam(params, 'r'),           // relativ luftfuktighet
+    t:    getParam(params, 't'),        // temperatur
+    ws:   getParam(params, 'ws'),       // vindhastighet
+    gust: getParam(params, 'gust'),     // byvind
+    wd:   getParam(params, 'wd'),       // vindriktning (grader)
+    r:    getParam(params, 'r'),        // relativ luftfuktighet
+    msl:  getParam(params, 'msl'),      // lufttryck (havsnivå)
     pmax: getParam(params, 'pmax'),     // max nederbörd
   };
 
@@ -388,8 +406,10 @@ async function fetchSMHI(lat, lon) {
       time:     entry.validTime,
       temp:     round1(getParam(p, 't')),
       wind:     round1(getParam(p, 'ws')),
+      windGust: round1(getParam(p, 'gust')),
       windDir:  degToDir(getParam(p, 'wd')),
       humidity: Math.round(getParam(p, 'r')),
+      pressure: Math.round(getParam(p, 'msl')),
       precipMm: round1(getParam(p, 'pmax')),
       precip:   Math.round(getParam(p, 'pmax') > 0 ? 70 : 10), // Uppskattad sannolikhet
       icon:     '🌤️',  // SMHI har inte lika bra ikoner
@@ -402,9 +422,11 @@ async function fetchSMHI(lat, lon) {
     current: {
       temp:     round1(c.t),
       wind:     round1(c.ws),
+      windGust: round1(c.gust),
       windDeg:  c.wd,
       windDir:  degToDir(c.wd),
       humidity: Math.round(c.r),
+      pressure: Math.round(c.msl),
       precip:   round1(c.pmax),
       icon:     '🌤️',
       desc:     'SMHI-prognos',
@@ -412,6 +434,218 @@ async function fetchSMHI(lat, lon) {
     hourly: hourly,
     daily:  [],
   };
+}
+
+// ── API: SMHI Vädervarningar ────────────────────────────────────────────────
+async function fetchSMHIWarnings(lat, lon) {
+  try {
+    // Hämta alla aktiva varningar
+    const res = await fetch('https://opendata-download-warnings.smhi.se/api/version/2/alerts.json');
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    // Filtrera varningar som gäller för denna position (inom ~100km)
+    const warnings = (data.alert || []).filter(alert => {
+      // Kolla om varningen gäller hela Sverige eller specifik region
+      const info = alert.info?.[0];
+      if (!info) return false;
+
+      // Kolla geografisk närhet om koordinater finns
+      const area = info.area?.[0];
+      if (area?.polygon) {
+        // Förenklad check - returnera alla för nu
+        return true;
+      }
+      return true;
+    }).map(alert => {
+      const info = alert.info?.[0] || {};
+      const severity = info.severity || 'Unknown';
+      const event = info.event || 'Vädervarning';
+      const headline = info.headline || event;
+      const description = info.description || '';
+      const onset = info.onset ? new Date(info.onset) : null;
+      const expires = info.expires ? new Date(info.expires) : null;
+
+      // Mappa severity till färg
+      const colorMap = {
+        'Extreme': 'red',
+        'Severe': 'orange',
+        'Moderate': 'yellow',
+        'Minor': 'green',
+      };
+
+      return {
+        event,
+        headline,
+        description,
+        severity,
+        color: colorMap[severity] || 'yellow',
+        onset,
+        expires,
+        areaDesc: info.area?.[0]?.areaDesc || 'Sverige',
+      };
+    }).slice(0, 5); // Max 5 varningar
+
+    return warnings;
+  } catch {
+    return [];
+  }
+}
+
+// ── API: Open-Meteo Luftkvalitet + Pollen ───────────────────────────────────
+async function fetchAirQuality(lat, lon) {
+  try {
+    const url =
+      'https://air-quality-api.open-meteo.com/v1/air-quality?' +
+      'latitude=' + lat + '&longitude=' + lon +
+      '&current=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone' +
+      '&hourly=european_aqi,pm10,pm2_5' +
+      '&forecast_days=1';
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+
+    const aqi = d.current?.european_aqi ?? 0;
+    const pm25 = d.current?.pm2_5 ?? 0;
+    const pm10 = d.current?.pm10 ?? 0;
+    const no2 = d.current?.nitrogen_dioxide ?? 0;
+    const o3 = d.current?.ozone ?? 0;
+
+    // AQI kategorier (European AQI)
+    let category, color;
+    if (aqi <= 20) { category = 'Utmärkt'; color = 'var(--confidence-high)'; }
+    else if (aqi <= 40) { category = 'Bra'; color = 'var(--confidence-high)'; }
+    else if (aqi <= 60) { category = 'Måttlig'; color = 'var(--confidence-medium)'; }
+    else if (aqi <= 80) { category = 'Dålig'; color = 'var(--confidence-low)'; }
+    else if (aqi <= 100) { category = 'Mycket dålig'; color = 'var(--confidence-low)'; }
+    else { category = 'Extremt dålig'; color = 'var(--confidence-low)'; }
+
+    return {
+      aqi,
+      category,
+      color,
+      pm25: round1(pm25),
+      pm10: round1(pm10),
+      no2: round1(no2),
+      o3: round1(o3),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── API: Open-Meteo Pollen ──────────────────────────────────────────────────
+async function fetchPollen(lat, lon) {
+  try {
+    const url =
+      'https://air-quality-api.open-meteo.com/v1/air-quality?' +
+      'latitude=' + lat + '&longitude=' + lon +
+      '&current=alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen' +
+      '&forecast_days=1';
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+
+    const c = d.current || {};
+
+    // Pollen nivåer: 0-10 låg, 10-50 måttlig, 50-100 hög, 100+ mycket hög
+    const getLevel = (val) => {
+      if (val == null || val < 10) return { level: 'Låg', color: 'var(--confidence-high)' };
+      if (val < 50) return { level: 'Måttlig', color: 'var(--confidence-medium)' };
+      if (val < 100) return { level: 'Hög', color: 'var(--confidence-low)' };
+      return { level: 'Mycket hög', color: 'var(--confidence-low)' };
+    };
+
+    const types = [];
+    if (c.birch_pollen > 5) types.push({ name: 'Björk', value: c.birch_pollen, ...getLevel(c.birch_pollen) });
+    if (c.grass_pollen > 5) types.push({ name: 'Gräs', value: c.grass_pollen, ...getLevel(c.grass_pollen) });
+    if (c.alder_pollen > 5) types.push({ name: 'Al', value: c.alder_pollen, ...getLevel(c.alder_pollen) });
+    if (c.mugwort_pollen > 5) types.push({ name: 'Gråbo', value: c.mugwort_pollen, ...getLevel(c.mugwort_pollen) });
+
+    return types;
+  } catch {
+    return null;
+  }
+}
+
+// ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
+function calcFeelsLike(temp, wind, humidity) {
+  // Wind Chill (när det är kallt och blåsigt)
+  if (temp <= 10 && wind >= 1.3) {
+    // Wind chill formel (Celsius, m/s)
+    const windKmh = wind * 3.6;
+    const wc = 13.12 + 0.6215 * temp - 11.37 * Math.pow(windKmh, 0.16) + 0.3965 * temp * Math.pow(windKmh, 0.16);
+    return round1(wc);
+  }
+
+  // Heat Index (när det är varmt och fuktigt)
+  if (temp >= 27 && humidity >= 40) {
+    // Förenklad heat index formel
+    const hi = temp + 0.33 * (humidity / 100 * 6.105 * Math.exp(17.27 * temp / (237.7 + temp))) - 4;
+    return round1(hi);
+  }
+
+  return round1(temp);
+}
+
+// ── Generera beskrivande prognos ────────────────────────────────────────────
+function generateForecastText(ens, daily, warnings) {
+  const parts = [];
+  const today = daily[0];
+  const tomorrow = daily[1];
+
+  // Nuvarande väder
+  const desc = ens.current.desc.toLowerCase();
+  const temp = ens.current.temp;
+  const wind = ens.current.wind;
+
+  // Tid på dygnet
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 12 ? 'förmiddagen' : hour < 18 ? 'eftermiddagen' : 'kvällen';
+
+  // Väderläge just nu
+  if (desc.includes('regn')) {
+    parts.push('Regnigt väder under ' + timeOfDay + '.');
+  } else if (desc.includes('snö')) {
+    parts.push('Snöfall under ' + timeOfDay + '.');
+  } else if (desc.includes('molnigt') || desc.includes('mulet')) {
+    parts.push('Molnigt under ' + timeOfDay + '.');
+  } else if (desc.includes('klart')) {
+    parts.push('Klart och ' + (temp > 20 ? 'varmt' : temp < 5 ? 'kallt' : 'behagligt') + ' väder.');
+  } else {
+    parts.push(ens.current.desc + '.');
+  }
+
+  // Vind
+  if (wind > 10) {
+    parts.push('Hård vind, ' + wind + ' m/s.');
+  } else if (wind > 6) {
+    parts.push('Frisk vind.');
+  }
+
+  // Temperaturutveckling
+  if (tomorrow && today) {
+    const tempDiff = tomorrow.tempMax - today.tempMax;
+    if (tempDiff <= -3) {
+      parts.push('Kallare imorgon – klä dig varmare.');
+    } else if (tempDiff >= 3) {
+      parts.push('Varmare imorgon.');
+    }
+  }
+
+  // Nederbörd imorgon
+  if (tomorrow && tomorrow.precipProb > 50) {
+    parts.push('Risk för nederbörd imorgon (' + tomorrow.precipProb + '%).');
+  }
+
+  // Varningar
+  if (warnings && warnings.length > 0) {
+    parts.push('⚠️ ' + warnings[0].headline);
+  }
+
+  return parts.join(' ');
 }
 
 // ── Ensemble Calculation ───────────────────────────────────────────────────
@@ -432,15 +666,19 @@ function calcEnsemble(results) {
   // Extrahera alla parametrar
   const temps     = ok.map(r => r.current.temp);
   const winds     = ok.map(r => r.current.wind);
+  const windGusts = ok.map(r => r.current.windGust).filter(g => g > 0);
   const windDegs  = ok.map(r => r.current.windDeg).filter(d => d != null);
   const humidities= ok.map(r => r.current.humidity);
+  const pressures = ok.map(r => r.current.pressure).filter(p => p > 0);
   const precips   = ok.map(r => r.current.precip);
 
   // Beräkna medelvärden
   const avgTemp   = avg(temps);
   const avgWind   = avg(winds);
+  const avgGust   = windGusts.length ? avg(windGusts) : 0;
   const avgWindDeg= circularMean(windDegs);
   const avgHumid  = avg(humidities);
+  const avgPressure = pressures.length ? Math.round(avg(pressures)) : 0;
   const avgPrecip = avg(precips);
 
   // Beräkna standardavvikelser för konfidensberäkning
@@ -576,12 +814,18 @@ function calcEnsemble(results) {
     return { ...d, sources: sourceCount };
   });
 
+  // Beräkna "känns som" temperatur
+  const feelsLike = calcFeelsLike(avgTemp, avgWind, avgHumid);
+
   return {
     current: {
       temp:     round1(avgTemp),
+      feelsLike: feelsLike,
       wind:     round1(avgWind),
+      windGust: round1(avgGust),
       windDir:  avgWindDeg != null ? degToDir(avgWindDeg) : primary.current.windDir,
       humidity: Math.round(avgHumid),
+      pressure: avgPressure,
       precip:   round1(avgPrecip),
       icon:     primary.current.icon,
       desc:     primary.current.desc,
@@ -599,13 +843,111 @@ function renderCurrent(ens) {
   currentIcon.textContent   = ens.current.icon;
   currentTemp.textContent   = ens.current.temp;
   currentDesc.textContent   = ens.current.desc;
-  currentWind.textContent   = ens.current.wind + ' m/s \u00A0\u00A0 ' + (ens.current.windDir || '');
+
+  // Känns som (visa bara om skillnad > 1 grad)
+  const feelsDiff = Math.abs(ens.current.feelsLike - ens.current.temp);
+  if (currentFeels) {
+    if (feelsDiff >= 1) {
+      currentFeels.textContent = 'Känns som ' + ens.current.feelsLike + '°';
+      currentFeels.style.display = 'block';
+    } else {
+      currentFeels.style.display = 'none';
+    }
+  }
+
+  // Vind med byvind
+  const gustText = ens.current.windGust > ens.current.wind + 2
+    ? ' (byar ' + ens.current.windGust + ')'
+    : '';
+  currentWind.textContent   = ens.current.wind + ' m/s' + gustText + ' ' + (ens.current.windDir || '');
+
   currentHumid.textContent  = ens.current.humidity + ' %';
   currentPrecip.textContent = ens.current.precip   + ' mm';
+
+  // Lufttryck
+  if (currentPressure && ens.current.pressure > 0) {
+    currentPressure.textContent = ens.current.pressure + ' hPa';
+  }
 
   confValue.textContent     = ens.confidence.label + ' (' + ens.confidence.pct + ' %)';
   confFill.style.width      = ens.confidence.pct + '%';
   confFill.className        = 'confidence-fill ' + ens.confidence.cls;
+}
+
+// ── Render Varningar ────────────────────────────────────────────────────────
+function renderWarnings(warnings) {
+  if (!warningsSection) return;
+  if (!warnings || warnings.length === 0) {
+    warningsSection.style.display = 'none';
+    return;
+  }
+
+  warningsSection.style.display = 'block';
+  const colorEmoji = { red: '🔴', orange: '🟠', yellow: '🟡', green: '🟢' };
+
+  warningsSection.innerHTML =
+    '<h3 class="section-title">⚠️ Vädervarningar</h3>' +
+    '<div class="warnings-list">' +
+    warnings.map(w =>
+      '<div class="warning-item warning-' + w.color + '">' +
+      '<span class="warning-icon">' + (colorEmoji[w.color] || '🟡') + '</span>' +
+      '<div class="warning-content">' +
+      '<div class="warning-headline">' + w.headline + '</div>' +
+      '<div class="warning-area">' + w.areaDesc + '</div>' +
+      '</div>' +
+      '</div>'
+    ).join('') +
+    '</div>';
+}
+
+// ── Render Luftkvalitet ─────────────────────────────────────────────────────
+function renderAirQuality(aq, pollen) {
+  if (!airQualitySection) return;
+  if (!aq && (!pollen || pollen.length === 0)) {
+    airQualitySection.style.display = 'none';
+    return;
+  }
+
+  airQualitySection.style.display = 'block';
+  let html = '<h3 class="section-title">🌬️ Luftkvalitet</h3><div class="air-quality-content">';
+
+  if (aq) {
+    const barWidth = Math.min(aq.aqi, 100);
+    html += '<div class="aqi-main">' +
+      '<div class="aqi-value" style="color:' + aq.color + '">' + aq.aqi + '</div>' +
+      '<div class="aqi-label">' + aq.category + '</div>' +
+      '<div class="aqi-bar"><div class="aqi-fill" style="width:' + barWidth + '%;background:' + aq.color + '"></div></div>' +
+      '</div>' +
+      '<div class="aqi-details">' +
+      '<span>PM2.5: ' + aq.pm25 + '</span>' +
+      '<span>PM10: ' + aq.pm10 + '</span>' +
+      '<span>O₃: ' + aq.o3 + '</span>' +
+      '</div>';
+  }
+
+  if (pollen && pollen.length > 0) {
+    html += '<div class="pollen-section">' +
+      '<div class="pollen-title">🌸 Pollen</div>' +
+      '<div class="pollen-list">' +
+      pollen.map(p =>
+        '<span class="pollen-item" style="color:' + p.color + '">' + p.name + ': ' + p.level + '</span>'
+      ).join('') +
+      '</div></div>';
+  }
+
+  html += '</div>';
+  airQualitySection.innerHTML = html;
+}
+
+// ── Render Prognos-text ─────────────────────────────────────────────────────
+function renderForecastText(text) {
+  if (!forecastText) return;
+  if (text) {
+    forecastText.textContent = text;
+    forecastText.parentElement.style.display = 'block';
+  } else {
+    forecastText.parentElement.style.display = 'none';
+  }
 }
 
 function renderSources(results) {
@@ -789,14 +1131,20 @@ async function fetchWeather(lat, lon, name) {
   lastLoc = { lat, lon, name };
 
   try {
-    const settled = await Promise.allSettled([
-      fetchOpenMeteo(lat, lon),
-      fetchYR(lat, lon),
-      fetchSMHI(lat, lon),
+    // Hämta väderdata från alla källor parallellt
+    const [weatherSettled, warnings, airQuality, pollen] = await Promise.all([
+      Promise.allSettled([
+        fetchOpenMeteo(lat, lon),
+        fetchYR(lat, lon),
+        fetchSMHI(lat, lon),
+      ]),
+      fetchSMHIWarnings(lat, lon),
+      fetchAirQuality(lat, lon),
+      fetchPollen(lat, lon),
     ]);
 
     const names   = ['Open-Meteo', 'YR', 'SMHI'];
-    const results = settled.map((r, i) =>
+    const results = weatherSettled.map((r, i) =>
       r.status === 'fulfilled'
         ? r.value
         : { source: names[i], status: 'error', error: r.reason?.message || 'Okänt fel' }
@@ -814,13 +1162,21 @@ async function fetchWeather(lat, lon, name) {
     renderHourly(ens.hourly);
     renderDaily(ens.daily);
 
+    // Nya funktioner
+    renderWarnings(warnings);
+    renderAirQuality(airQuality, pollen);
+
+    // Generera och visa beskrivande text
+    const forecastTextStr = generateForecastText(ens, ens.daily, warnings);
+    renderForecastText(forecastTextStr);
+
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
 
     // Persist for offline + recent location
     try {
       localStorage.setItem('väder_cache', JSON.stringify({
-        loc: lastLoc, results, ens, ts: Date.now()
+        loc: lastLoc, results, ens, warnings, airQuality, pollen, ts: Date.now()
       }));
       // Spara senaste plats separat (för snabbval)
       localStorage.setItem('väder_recent', JSON.stringify(lastLoc));
@@ -972,6 +1328,13 @@ recentBtn.addEventListener('click', loadRecentLocation);
 sourcesToggle.addEventListener('click', () => {
   sourcesSection.classList.toggle('open');
 });
+
+// Refresh button
+if (refreshBtn) {
+  refreshBtn.addEventListener('click', () => {
+    if (lastLoc) fetchWeather(lastLoc.lat, lastLoc.lon, lastLoc.name);
+  });
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!navigator.onLine) {
