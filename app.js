@@ -519,9 +519,9 @@ async function fetchIconEuEnsemble(lat, lon) {
       'https://ensemble-api.open-meteo.com/v1/ensemble?' +
       'latitude=' + lat + '&longitude=' + lon +
       '&models=icon_eu' +
-      '&current=precipitation,wind_speed_10m,wind_gusts_10m' +
-      '&hourly=precipitation,wind_speed_10m,wind_gusts_10m' +
-      '&daily=precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max' +
+      '&current=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m' +
+      '&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m' +
+      '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max' +
       '&wind_speed_unit=ms' +
       '&timezone=auto';
 
@@ -544,6 +544,7 @@ async function fetchIconEuEnsemble(lat, lon) {
     };
 
     // Current - samla alla medlemmars värden
+    const currentTemp = [];
     const currentPrecip = [];
     const currentWind = [];
     const currentGust = [];
@@ -551,6 +552,9 @@ async function fetchIconEuEnsemble(lat, lon) {
     // Hämta alla medlemmars current-värden
     for (let m = 0; m < 40; m++) {
       const suffix = m === 0 ? '' : '_member' + pad2(m);
+      if (d.current?.['temperature_2m' + suffix] != null) {
+        currentTemp.push(d.current['temperature_2m' + suffix]);
+      }
       if (d.current?.['precipitation' + suffix] != null) {
         currentPrecip.push(d.current['precipitation' + suffix]);
       }
@@ -566,16 +570,19 @@ async function fetchIconEuEnsemble(lat, lon) {
     const hourlyEns = [];
     if (d.hourly?.time) {
       for (let i = 0; i < d.hourly.time.length; i++) {
+        const tempVals = [];
         const precipVals = [];
         const windVals = [];
         const gustVals = [];
 
         for (let m = 0; m < 40; m++) {
           const suffix = m === 0 ? '' : '_member' + pad2(m);
+          const tKey = 'temperature_2m' + suffix;
           const pKey = 'precipitation' + suffix;
           const wKey = 'wind_speed_10m' + suffix;
           const gKey = 'wind_gusts_10m' + suffix;
 
+          if (d.hourly[tKey]?.[i] != null) tempVals.push(d.hourly[tKey][i]);
           if (d.hourly[pKey]?.[i] != null) precipVals.push(d.hourly[pKey][i]);
           if (d.hourly[wKey]?.[i] != null) windVals.push(d.hourly[wKey][i]);
           if (d.hourly[gKey]?.[i] != null) gustVals.push(d.hourly[gKey][i]);
@@ -583,6 +590,7 @@ async function fetchIconEuEnsemble(lat, lon) {
 
         hourlyEns.push({
           time: d.hourly.time[i],
+          temp: calcStats(tempVals),
           precip: calcStats(precipVals),
           wind: calcStats(windVals),
           gust: calcStats(gustVals),
@@ -594,16 +602,22 @@ async function fetchIconEuEnsemble(lat, lon) {
     const dailyEns = [];
     if (d.daily?.time) {
       for (let i = 0; i < d.daily.time.length; i++) {
+        const tempMaxVals = [];
+        const tempMinVals = [];
         const precipVals = [];
         const windVals = [];
         const gustVals = [];
 
         for (let m = 0; m < 40; m++) {
           const suffix = m === 0 ? '' : '_member' + pad2(m);
+          const tMaxKey = 'temperature_2m_max' + suffix;
+          const tMinKey = 'temperature_2m_min' + suffix;
           const pKey = 'precipitation_sum' + suffix;
           const wKey = 'wind_speed_10m_max' + suffix;
           const gKey = 'wind_gusts_10m_max' + suffix;
 
+          if (d.daily[tMaxKey]?.[i] != null) tempMaxVals.push(d.daily[tMaxKey][i]);
+          if (d.daily[tMinKey]?.[i] != null) tempMinVals.push(d.daily[tMinKey][i]);
           if (d.daily[pKey]?.[i] != null) precipVals.push(d.daily[pKey][i]);
           if (d.daily[wKey]?.[i] != null) windVals.push(d.daily[wKey][i]);
           if (d.daily[gKey]?.[i] != null) gustVals.push(d.daily[gKey][i]);
@@ -616,6 +630,8 @@ async function fetchIconEuEnsemble(lat, lon) {
 
         dailyEns.push({
           time: d.daily.time[i],
+          tempMax: calcStats(tempMaxVals),
+          tempMin: calcStats(tempMinVals),
           precip: calcStats(precipVals),
           precipProb,
           wind: calcStats(windVals),
@@ -633,6 +649,7 @@ async function fetchIconEuEnsemble(lat, lon) {
       source: 'ICON-EU Ensemble',
       members: 40,
       current: {
+        temp: calcStats(currentTemp),
         precip: calcStats(currentPrecip),
         precipProb: currentPrecipProb,
         wind: calcStats(currentWind),
@@ -1061,16 +1078,22 @@ function calcEnsemble(results) {
       const p = data.primary;
       const sourceCount = data.temps.length;
       const precipArr = data.precipMms.filter(v => v != null);
+      const windArr = data.winds.filter(v => v != null);
+      const tempArr = data.temps.filter(v => v != null);
       return {
         time:       p.time,
-        temp:       round1(avg(data.temps)),
+        temp:       tempArr.length ? round1(avg(tempArr)) : (p.temp ?? 0),
+        tempMin:    tempArr.length ? round1(Math.min(...tempArr)) : null,  // Min från multi-source
+        tempMax:    tempArr.length ? round1(Math.max(...tempArr)) : null,  // Max från multi-source
         icon:       p.icon,
         desc:       p.desc,
         precip:     data.precips.length ? Math.round(avg(data.precips)) : (p.precip ?? 0),
         precipMm:   precipArr.length ? round1(avg(precipArr)) : (p.precipMm ?? 0),
         precipMin:  precipArr.length ? round1(Math.min(...precipArr)) : 0,  // Min från multi-source
         precipMax:  precipArr.length ? round1(Math.max(...precipArr)) : 0,  // Max från multi-source
-        wind:       data.winds.length ? round1(avg(data.winds)) : (p.wind ?? 0),
+        wind:       windArr.length ? round1(avg(windArr)) : (p.wind ?? 0),
+        windMin:    windArr.length ? round1(Math.min(...windArr)) : null,  // Min från multi-source
+        windMax:    windArr.length ? round1(Math.max(...windArr)) : null,  // Max från multi-source
         windDir:    p.windDir,
         humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
         uv:         p.uv ?? 0,  // UV endast från Open-Meteo
@@ -1709,28 +1732,50 @@ function showDayDetail(index) {
   // Hämta daglig ensemble-data
   const ensDailyData = cachedIconEuEns?.daily?.find(e => e.time === day.time);
 
-  // Summary stats
-  const avgWind = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.wind, 0) / dayHours.length) : day.wind;
+  // Summary stats - kombinera multi-source med ICON-EU ensemble
   const avgHumidity = dayHours.length ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length) : 0;
   const mainWindDir = dayHours.length ? dayHours[Math.floor(dayHours.length / 2)].windDir : '';
 
-  // Kombinera multi-source (YR, SMHI, Open-Meteo) med ICON-EU ensemble
+  // === TEMPERATUR ===
+  // Multi-source min/max från timdata
+  const msTemps = dayHours.flatMap(h => [h.tempMin, h.tempMax, h.temp].filter(v => v != null));
+  // ICON-EU temperatur
+  const iconTempMin = ensDailyData?.tempMin?.min ?? null;
+  const iconTempMax = ensDailyData?.tempMax?.max ?? null;
+  // Kombinera
+  const allTempValues = [...msTemps];
+  if (iconTempMin != null) allTempValues.push(iconTempMin);
+  if (iconTempMax != null) allTempValues.push(iconTempMax);
+  const tempMin = allTempValues.length ? round1(Math.min(...allTempValues)) : day.tempMin;
+  const tempMax = allTempValues.length ? round1(Math.max(...allTempValues)) : day.tempMax;
+
+  // === VIND ===
+  // Multi-source vind
+  const msWinds = dayHours.flatMap(h => [h.windMin, h.windMax, h.wind].filter(v => v != null));
+  // ICON-EU vind
+  const iconWindMin = ensDailyData?.wind?.min ?? null;
+  const iconWindMax = ensDailyData?.wind?.max ?? null;
+  // Kombinera
+  const allWindValues = [...msWinds];
+  if (iconWindMin != null) allWindValues.push(iconWindMin);
+  if (iconWindMax != null) allWindValues.push(iconWindMax);
+  const windMin = allWindValues.length ? round1(Math.min(...allWindValues)) : day.wind;
+  const windMax = allWindValues.length ? round1(Math.max(...allWindValues)) : day.wind;
+
+  // === NEDERBÖRD ===
   // Multi-source: summa av timvärden per källa
   const msTotal = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
   const msTotals = dayHours.length
     ? [round1(dayHours.reduce((s, h) => s + (h.precipMin ?? h.precipMm), 0)),
        round1(dayHours.reduce((s, h) => s + (h.precipMax ?? h.precipMm), 0))]
     : [day.precip, day.precip];
-
   // ICON-EU ensemble: min/max för dagen
-  const iconMin = ensDailyData?.precip?.min ?? null;
-  const iconMax = ensDailyData?.precip?.max ?? null;
-
+  const iconPrecipMin = ensDailyData?.precip?.min ?? null;
+  const iconPrecipMax = ensDailyData?.precip?.max ?? null;
   // Kombinera alla värden för totalt intervall
   const allPrecipValues = [msTotals[0], msTotals[1]];
-  if (iconMin != null) allPrecipValues.push(iconMin);
-  if (iconMax != null) allPrecipValues.push(iconMax);
-
+  if (iconPrecipMin != null) allPrecipValues.push(iconPrecipMin);
+  if (iconPrecipMax != null) allPrecipValues.push(iconPrecipMax);
   const combinedMin = round1(Math.min(...allPrecipValues));
   const combinedMax = round1(Math.max(...allPrecipValues));
 
@@ -1746,9 +1791,13 @@ function showDayDetail(index) {
     precipText += ' (' + day.precipProb + '%)';
   }
 
+  // Formatera temperatur och vind med intervall
+  const tempText = (tempMin !== tempMax) ? tempMin + '° / ' + tempMax + '°' : day.tempMin + '° / ' + day.tempMax + '°';
+  const windText = (windMin !== windMax) ? windMin + '-' + windMax + ' m/s ' + mainWindDir : windMin + ' m/s ' + mainWindDir;
+
   daySummary.innerHTML =
-      '<div class="day-detail-stat"><div class="day-detail-stat-label">🌡️ Temperatur</div><div class="day-detail-stat-value">' + day.tempMin + '° / ' + day.tempMax + '°</div></div>'
-    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💨 Vind</div><div class="day-detail-stat-value">' + avgWind + ' m/s ' + mainWindDir + '</div></div>'
+      '<div class="day-detail-stat"><div class="day-detail-stat-label">🌡️ Temperatur</div><div class="day-detail-stat-value">' + tempText + '</div></div>'
+    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💨 Vind</div><div class="day-detail-stat-value">' + windText + '</div></div>'
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💧 Nederbörd</div><div class="day-detail-stat-value">' + precipText + '</div></div>'
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💦 Luftfuktighet</div><div class="day-detail-stat-value">' + avgHumidity + '%</div></div>';
 
@@ -1761,32 +1810,35 @@ function showDayDetail(index) {
           const ensKey = h.time.slice(0, 13);
           const iconEns = ensHourlyMap.get(ensKey);
 
-          // Kombinera multi-source (precipMin/precipMax) med ICON-EU
-          const allValues = [];
-          if (h.precipMin != null) allValues.push(h.precipMin);
-          if (h.precipMax != null) allValues.push(h.precipMax);
-          if (h.precipMm != null) allValues.push(h.precipMm);
-          if (iconEns?.precip?.min != null) allValues.push(iconEns.precip.min);
-          if (iconEns?.precip?.max != null) allValues.push(iconEns.precip.max);
+          // === TEMPERATUR ===
+          const tempVals = [h.tempMin, h.tempMax, h.temp].filter(v => v != null);
+          if (iconEns?.temp?.min != null) tempVals.push(iconEns.temp.min);
+          if (iconEns?.temp?.max != null) tempVals.push(iconEns.temp.max);
+          const tMin = tempVals.length ? round1(Math.min(...tempVals)) : h.temp;
+          const tMax = tempVals.length ? round1(Math.max(...tempVals)) : h.temp;
+          const tempHtml = (tMin !== tMax) ? tMin + '-' + tMax + '°' : h.temp + '°';
 
-          let precipHtml;
-          if (allValues.length > 0) {
-            const min = round1(Math.min(...allValues));
-            const max = round1(Math.max(...allValues));
-            if (max > 0 && min !== max) {
-              precipHtml = min + '-' + max + 'mm';
-            } else {
-              precipHtml = h.precipMm + 'mm';
-            }
-          } else {
-            precipHtml = h.precipMm + 'mm';
-          }
+          // === VIND ===
+          const windVals = [h.windMin, h.windMax, h.wind].filter(v => v != null);
+          if (iconEns?.wind?.min != null) windVals.push(iconEns.wind.min);
+          if (iconEns?.wind?.max != null) windVals.push(iconEns.wind.max);
+          const wMin = windVals.length ? round1(Math.min(...windVals)) : h.wind;
+          const wMax = windVals.length ? round1(Math.max(...windVals)) : h.wind;
+          const windHtml = (wMin !== wMax) ? wMin + '-' + wMax : h.wind;
+
+          // === NEDERBÖRD ===
+          const precipVals = [h.precipMin, h.precipMax, h.precipMm].filter(v => v != null);
+          if (iconEns?.precip?.min != null) precipVals.push(iconEns.precip.min);
+          if (iconEns?.precip?.max != null) precipVals.push(iconEns.precip.max);
+          const pMin = precipVals.length ? round1(Math.min(...precipVals)) : 0;
+          const pMax = precipVals.length ? round1(Math.max(...precipVals)) : 0;
+          const precipHtml = (pMax > 0 && pMin !== pMax) ? pMin + '-' + pMax + 'mm' : h.precipMm + 'mm';
 
           return '<div class="day-detail-hour">'
             + '<div class="day-detail-hour-time">' + fmtTime(h.time) + '</div>'
             + '<div class="day-detail-hour-icon">' + h.icon + '</div>'
-            + '<div class="day-detail-hour-temp">' + h.temp + '°</div>'
-            + '<div class="day-detail-hour-detail">💨 ' + h.wind + '</div>'
+            + '<div class="day-detail-hour-temp">' + tempHtml + '</div>'
+            + '<div class="day-detail-hour-detail">💨 ' + windHtml + '</div>'
             + '<div class="day-detail-hour-detail">💧 ' + precipHtml + '</div>'
             + '</div>';
         }).join('')
