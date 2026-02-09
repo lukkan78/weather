@@ -39,9 +39,11 @@ const sourcesToggle  = $('sourcesToggle');
 const refreshBtn     = $('refreshBtn');
 const currentFeels   = $('currentFeelsLike');
 const currentPressure= $('currentPressure');
+const currentUV      = $('currentUV');
 const currentGust    = $('currentGust');
 const warningsSection= $('warningsSection');
 const airQualitySection = $('airQualitySection');
+const uvSection      = $('uvSection');
 const forecastText   = $('forecastText');
 const forecastSummary= $('forecastSummary');
 const searchClear    = $('searchClear');
@@ -123,6 +125,16 @@ function degToDir(deg) {
   if (deg == null) return '';
   const dirs = ['N', 'NÖ', 'Ö', 'SÖ', 'S', 'SV', 'V', 'NV'];
   return dirs[Math.round(deg / 45) % 8];
+}
+
+// UV-index nivå och färg (WHO-standard)
+function getUVLevel(uv) {
+  if (uv <= 0) return { level: '-', color: 'var(--text-muted)', cls: 'uv-none' };
+  if (uv < 3)  return { level: 'Låg', color: '#4ade80', cls: 'uv-low' };
+  if (uv < 6)  return { level: 'Måttlig', color: '#fbbf24', cls: 'uv-moderate' };
+  if (uv < 8)  return { level: 'Hög', color: '#f97316', cls: 'uv-high' };
+  if (uv < 11) return { level: 'Mycket hög', color: '#ef4444', cls: 'uv-very-high' };
+  return { level: 'Extrem', color: '#a855f7', cls: 'uv-extreme' };
 }
 
 // Cirkulärt medelvärde för vinklar (grader) – hanterar 0°/360° wrap-around
@@ -251,8 +263,8 @@ async function fetchOpenMeteo(lat, lon) {
     'https://api.open-meteo.com/v1/forecast?' +
     'latitude='  + lat  + '&longitude=' + lon +
     '&current_weather=true' +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,windgusts_10m,pressure_msl,weathercode' +
-    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,precipitation_probability_max,weathercode' +
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,windgusts_10m,pressure_msl,weathercode,uv_index' +
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,precipitation_probability_max,weathercode,uv_index_max' +
     '&timezone=auto&forecast_days=16' +
     '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
 
@@ -287,6 +299,7 @@ async function fetchOpenMeteo(lat, lon) {
       humidity: d.hourly.relative_humidity_2m[idx] ?? 0,
       pressure: Math.round(d.hourly.pressure_msl?.[idx] ?? 0),
       precip:   round1(d.hourly.precipitation[idx] ?? 0),
+      uv:       round1(d.hourly.uv_index?.[idx] ?? 0),
       icon:     wmo(cur.weathercode, isDay).icon,
       desc:     wmo(cur.weathercode, isDay).desc,
     },
@@ -304,6 +317,7 @@ async function fetchOpenMeteo(lat, lon) {
         windDir:    degToDir(d.hourly.winddirection_10m?.[i]),
         humidity:   d.hourly.relative_humidity_2m?.[i] ?? 0,
         pressure:   Math.round(d.hourly.pressure_msl?.[i] ?? 0),
+        uv:         round1(d.hourly.uv_index?.[i] ?? 0),
       };
     }),
     daily: d.daily.time.map((t, i) => ({
@@ -314,6 +328,7 @@ async function fetchOpenMeteo(lat, lon) {
       precipProb: d.daily.precipitation_probability_max?.[i] ?? 0,
       wind:       round1(d.daily.windspeed_10m_max?.[i] ?? 0),
       windGust:   round1(d.daily.windgusts_10m_max?.[i] ?? 0),
+      uvMax:      round1(d.daily.uv_index_max?.[i] ?? 0),
       icon:       wmo(d.daily.weathercode?.[i] ?? 0, true).icon,
     })),
   };
@@ -1054,6 +1069,7 @@ function calcEnsemble(results) {
         wind:       data.winds.length ? round1(avg(data.winds)) : (p.wind ?? 0),
         windDir:    p.windDir,
         humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
+        uv:         p.uv ?? 0,  // UV endast från Open-Meteo
         sources:    sourceCount,  // Antal källor för denna timme
       };
     });
@@ -1116,10 +1132,11 @@ function calcEnsemble(results) {
         tempMax: round1(d.tempMax * (1 - weight) + avgTempMax * weight),
         wind:    round1(d.wind * (1 - weight) + avgWind * weight),
         precip:  round1(d.precip * (1 - weight) + totalPrecip * weight),
+        uvMax:   d.uvMax ?? 0,
         sources: sourceCount,
       };
     }
-    return { ...d, sources: sourceCount };
+    return { ...d, uvMax: d.uvMax ?? 0, sources: sourceCount };
   });
 
   // Beräkna "känns som" temperatur
@@ -1135,6 +1152,7 @@ function calcEnsemble(results) {
       humidity: Math.round(avgHumid),
       pressure: avgPressure,
       precip:   round1(avgPrecip),
+      uv:       primary.current.uv ?? 0,  // UV endast från Open-Meteo
       icon:     primary.current.icon,
       desc:     primary.current.desc,
     },
@@ -1197,6 +1215,18 @@ function renderCurrent(ens, iconEuEns) {
   // Lufttryck
   if (currentPressure && ens.current.pressure > 0) {
     currentPressure.textContent = ens.current.pressure + ' hPa';
+  }
+
+  // UV-index (visa endast dagtid när UV > 0)
+  if (currentUV) {
+    const uv = ens.current.uv ?? 0;
+    if (uv > 0) {
+      const uvInfo = getUVLevel(uv);
+      currentUV.innerHTML = '<span style="color:' + uvInfo.color + '">UV ' + uv + '</span>';
+      currentUV.parentElement.style.display = '';
+    } else {
+      currentUV.parentElement.style.display = 'none';
+    }
   }
 
   confValue.textContent     = ens.confidence.label + ' (' + ens.confidence.pct + ' %)';
@@ -1291,6 +1321,85 @@ function renderAirQuality(aq, pollen) {
   if (toggle) {
     toggle.addEventListener('click', () => {
       airQualitySection.classList.toggle('open');
+    });
+  }
+}
+
+// ── Render UV-index sektion ─────────────────────────────────────────────────
+function renderUV(hourly) {
+  if (!uvSection) return;
+
+  // Filtrera ut timmar med UV > 0 (dagtid) för de närmaste 24 timmarna
+  const now = new Date();
+  const uvHours = (hourly || [])
+    .filter(h => {
+      const hTime = new Date(h.time);
+      const hoursAhead = (hTime - now) / (1000 * 60 * 60);
+      return hoursAhead >= -1 && hoursAhead <= 24 && (h.uv ?? 0) > 0;
+    })
+    .slice(0, 16);
+
+  // Om inga UV-värden > 0, dölj sektionen
+  if (!uvHours.length) {
+    uvSection.style.display = 'none';
+    return;
+  }
+
+  uvSection.style.display = 'block';
+
+  // Hitta max UV för skalning
+  const maxUV = Math.max(...uvHours.map(h => h.uv), 1);
+  const currentUVVal = uvHours[0]?.uv ?? 0;
+  const uvInfo = getUVLevel(currentUVVal);
+
+  // Bygg HTML
+  let html = '<h3 class="section-title section-toggle" id="uvToggle">' +
+    'UV-index — <span style="color:' + uvInfo.color + '">UV ' + currentUVVal + ' (' + uvInfo.level + ')</span>' +
+    ' <span class="toggle-icon">▼</span></h3>';
+
+  html += '<div class="uv-content">';
+
+  // UV-skala legend
+  html += '<div class="uv-legend">' +
+    '<span class="uv-legend-item" style="background:#4ade80">1-2 Låg</span>' +
+    '<span class="uv-legend-item" style="background:#fbbf24">3-5 Måttlig</span>' +
+    '<span class="uv-legend-item" style="background:#f97316">6-7 Hög</span>' +
+    '<span class="uv-legend-item" style="background:#ef4444">8-10 Mkt hög</span>' +
+    '<span class="uv-legend-item" style="background:#a855f7">11+ Extrem</span>' +
+    '</div>';
+
+  // Timdiagram
+  html += '<div class="uv-chart">';
+  uvHours.forEach(h => {
+    const uv = h.uv ?? 0;
+    const uvLvl = getUVLevel(uv);
+    const height = Math.max((uv / 12) * 100, 8); // Max skala 12
+    const time = h.time.match(/T(\d{2})/)?.[1] ?? '';
+
+    html += '<div class="uv-bar-container">' +
+      '<div class="uv-bar" style="height:' + height + '%;background:' + uvLvl.color + '" title="UV ' + uv + '"></div>' +
+      '<div class="uv-bar-value">' + uv + '</div>' +
+      '<div class="uv-bar-time">' + time + '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  // Skyddstips baserat på aktuellt UV
+  const tips = currentUVVal >= 8 ? 'Undvik solen mitt på dagen. Använd solskydd, kläder och solglasögon.'
+    : currentUVVal >= 6 ? 'Skydda dig med solkräm, hatt och solglasögon.'
+    : currentUVVal >= 3 ? 'Använd solskydd vid längre utevistelse.'
+    : 'Låg UV-strålning, minimalt solskydd behövs.';
+
+  html += '<div class="uv-tip">' + tips + '</div>';
+  html += '</div>';
+
+  uvSection.innerHTML = html;
+
+  // Add toggle listener
+  const toggle = document.getElementById('uvToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      uvSection.classList.toggle('open');
     });
   }
 }
@@ -1572,6 +1681,7 @@ async function fetchWeather(lat, lon, name) {
     // Nya funktioner
     renderWarnings(warnings);
     renderAirQuality(airQuality, pollen);
+    renderUV(ens.hourly);
 
     // Generera och visa beskrivande text
     const forecastTextStr = generateForecastText(ens, ens.daily, warnings);
@@ -1613,6 +1723,9 @@ function loadCache() {
     renderSources(c.results);
     renderHourly(c.ens.hourly, c.iconEuEns);
     renderDaily(c.ens.daily, c.iconEuEns);
+    renderWarnings(c.warnings);
+    renderAirQuality(c.airQuality, c.pollen);
+    renderUV(c.ens.hourly);
 
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
