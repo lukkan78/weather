@@ -1083,8 +1083,8 @@ function renderAirQuality(aq, pollen) {
 
   airQualitySection.style.display = 'block';
 
-  // Collapsible header med AQI-värde (samma stil som Datakällor)
-  const aqiPreview = aq ? ' — AQI ' + aq.aqi + ' (' + aq.category + ')' : '';
+  // Collapsible header med AQI-värde i färg (samma stil som Datakällor)
+  const aqiPreview = aq ? ' — <span style="color:' + aq.color + '">AQI ' + aq.aqi + '</span>' : '';
   let html = '<h3 class="section-title section-toggle" id="airQualityToggle">Luftkvalitet' + aqiPreview + ' <span class="toggle-icon">▼</span></h3>';
   html += '<div class="air-quality-content">';
 
