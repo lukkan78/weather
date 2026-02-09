@@ -1337,7 +1337,7 @@ function renderUV(hourly) {
       const hoursAhead = (hTime - now) / (1000 * 60 * 60);
       return hoursAhead >= -1 && hoursAhead <= 24 && (h.uv ?? 0) > 0;
     })
-    .slice(0, 16);
+    .slice(0, 14);
 
   // Om inga UV-värden > 0, dölj sektionen
   if (!uvHours.length) {
@@ -1347,8 +1347,8 @@ function renderUV(hourly) {
 
   uvSection.style.display = 'block';
 
-  // Hitta max UV för skalning
-  const maxUV = Math.max(...uvHours.map(h => h.uv), 1);
+  // Hitta max UV för skalning (minst 3 för bättre visualisering)
+  const maxUV = Math.max(...uvHours.map(h => h.uv), 3);
   const currentUVVal = uvHours[0]?.uv ?? 0;
   const uvInfo = getUVLevel(currentUVVal);
 
@@ -1359,7 +1359,88 @@ function renderUV(hourly) {
 
   html += '<div class="uv-content">';
 
-  // UV-skala legend
+  // SVG linjediagram
+  const width = 100;
+  const height = 50;
+  const padding = 2;
+  const graphWidth = width - padding * 2;
+  const graphHeight = height - padding * 2;
+  const stepX = graphWidth / (uvHours.length - 1 || 1);
+
+  // Skapa punkter för linjen
+  const points = uvHours.map((h, i) => {
+    const x = padding + i * stepX;
+    const y = height - padding - (h.uv / maxUV) * graphHeight;
+    return { x, y, uv: h.uv, time: h.time.match(/T(\d{2})/)?.[1] ?? '' };
+  });
+
+  // Skapa path för linjen
+  const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+
+  // Skapa gradient fill path
+  const fillPath = linePath + ' L' + points[points.length - 1].x.toFixed(1) + ',' + (height - padding) +
+    ' L' + padding + ',' + (height - padding) + ' Z';
+
+  html += '<div class="uv-chart-container">';
+  html += '<svg class="uv-line-chart" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">';
+
+  // Gradient definition
+  html += '<defs><linearGradient id="uvGradient" x1="0%" y1="0%" x2="0%" y2="100%">' +
+    '<stop offset="0%" style="stop-color:' + uvInfo.color + ';stop-opacity:0.4"/>' +
+    '<stop offset="100%" style="stop-color:' + uvInfo.color + ';stop-opacity:0.05"/>' +
+    '</linearGradient></defs>';
+
+  // Horisontella linjer för nivåer
+  [3, 6, 8, 11].forEach(level => {
+    if (level <= maxUV) {
+      const y = height - padding - (level / maxUV) * graphHeight;
+      const color = getUVLevel(level).color;
+      html += '<line x1="' + padding + '" y1="' + y.toFixed(1) + '" x2="' + (width - padding) + '" y2="' + y.toFixed(1) +
+        '" stroke="' + color + '" stroke-width="0.3" stroke-dasharray="1,1" opacity="0.5"/>';
+    }
+  });
+
+  // Fyllning under linjen
+  html += '<path d="' + fillPath + '" fill="url(#uvGradient)"/>';
+
+  // Linjen
+  html += '<path d="' + linePath + '" fill="none" stroke="' + uvInfo.color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+
+  // Punkter med färg baserat på UV-nivå
+  points.forEach(p => {
+    const lvl = getUVLevel(p.uv);
+    html += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="2" fill="' + lvl.color + '"/>';
+  });
+
+  html += '</svg>';
+
+  // Tidsetiketter under grafen
+  html += '<div class="uv-time-labels">';
+  points.forEach((p, i) => {
+    // Visa var 2:a eller 3:e etikett beroende på antal
+    if (i === 0 || i === points.length - 1 || (points.length <= 8 ? true : i % 2 === 0)) {
+      const leftPercent = (p.x / width) * 100;
+      html += '<span class="uv-time-label" style="left:' + leftPercent.toFixed(1) + '%">' + p.time + '</span>';
+    }
+  });
+  html += '</div>';
+
+  // UV-värden ovanför punkter
+  html += '<div class="uv-value-labels">';
+  const peakIdx = points.reduce((maxIdx, p, i, arr) => p.uv > arr[maxIdx].uv ? i : maxIdx, 0);
+  points.forEach((p, i) => {
+    // Visa första, sista och max-värdet
+    if (i === 0 || i === points.length - 1 || i === peakIdx) {
+      const leftPercent = (p.x / width) * 100;
+      const lvl = getUVLevel(p.uv);
+      html += '<span class="uv-value-label" style="left:' + leftPercent.toFixed(1) + '%;color:' + lvl.color + '">' + p.uv + '</span>';
+    }
+  });
+  html += '</div>';
+
+  html += '</div>'; // uv-chart-container
+
+  // Färgkodning/legend under diagrammet
   html += '<div class="uv-legend">' +
     '<span class="uv-legend-item" style="background:#4ade80">1-2 Låg</span>' +
     '<span class="uv-legend-item" style="background:#fbbf24">3-5 Måttlig</span>' +
@@ -1368,26 +1449,11 @@ function renderUV(hourly) {
     '<span class="uv-legend-item" style="background:#a855f7">11+ Extrem</span>' +
     '</div>';
 
-  // Timdiagram
-  html += '<div class="uv-chart">';
-  uvHours.forEach(h => {
-    const uv = h.uv ?? 0;
-    const uvLvl = getUVLevel(uv);
-    const height = Math.max((uv / 12) * 100, 8); // Max skala 12
-    const time = h.time.match(/T(\d{2})/)?.[1] ?? '';
-
-    html += '<div class="uv-bar-container">' +
-      '<div class="uv-bar" style="height:' + height + '%;background:' + uvLvl.color + '" title="UV ' + uv + '"></div>' +
-      '<div class="uv-bar-value">' + uv + '</div>' +
-      '<div class="uv-bar-time">' + time + '</div>' +
-      '</div>';
-  });
-  html += '</div>';
-
-  // Skyddstips baserat på aktuellt UV
-  const tips = currentUVVal >= 8 ? 'Undvik solen mitt på dagen. Använd solskydd, kläder och solglasögon.'
-    : currentUVVal >= 6 ? 'Skydda dig med solkräm, hatt och solglasögon.'
-    : currentUVVal >= 3 ? 'Använd solskydd vid längre utevistelse.'
+  // Skyddstips baserat på max UV under dagen
+  const maxUVToday = Math.max(...uvHours.map(h => h.uv));
+  const tips = maxUVToday >= 8 ? 'Undvik solen mitt på dagen. Använd solskydd, kläder och solglasögon.'
+    : maxUVToday >= 6 ? 'Skydda dig med solkräm, hatt och solglasögon.'
+    : maxUVToday >= 3 ? 'Använd solskydd vid längre utevistelse.'
     : 'Låg UV-strålning, minimalt solskydd behövs.';
 
   html += '<div class="uv-tip">' + tips + '</div>';
