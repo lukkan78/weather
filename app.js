@@ -1371,7 +1371,7 @@ function renderUV(hourly) {
   const points = uvHours.map((h, i) => {
     const x = padding + i * stepX;
     const y = height - padding - (h.uv / maxUV) * graphHeight;
-    return { x, y, uv: h.uv, time: h.time.match(/T(\d{2})/)?.[1] ?? '' };
+    return { x, y, uv: h.uv, time: h.time.match(/T(\d{2})/)?.[1] ?? '', idx: i };
   });
 
   // Skapa path för linjen
@@ -1381,8 +1381,18 @@ function renderUV(hourly) {
   const fillPath = linePath + ' L' + points[points.length - 1].x.toFixed(1) + ',' + (height - padding) +
     ' L' + padding + ',' + (height - padding) + ' Z';
 
-  html += '<div class="uv-chart-container">';
-  html += '<svg class="uv-line-chart" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">';
+  html += '<div class="uv-chart-container" id="uvChartContainer">';
+
+  // Tooltip för interaktivitet
+  html += '<div class="uv-tooltip" id="uvTooltip" style="display:none">' +
+    '<span class="uv-tooltip-value" id="uvTooltipValue">0</span>' +
+    '<span class="uv-tooltip-time" id="uvTooltipTime">00:00</span>' +
+    '</div>';
+
+  // Vertikal indikatorlinje
+  html += '<div class="uv-indicator" id="uvIndicator" style="display:none"></div>';
+
+  html += '<svg class="uv-line-chart" id="uvLineChart" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">';
 
   // Gradient definition
   html += '<defs><linearGradient id="uvGradient" x1="0%" y1="0%" x2="0%" y2="100%">' +
@@ -1407,9 +1417,9 @@ function renderUV(hourly) {
   html += '<path d="' + linePath + '" fill="none" stroke="' + uvInfo.color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
 
   // Punkter med färg baserat på UV-nivå
-  points.forEach(p => {
+  points.forEach((p, i) => {
     const lvl = getUVLevel(p.uv);
-    html += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="2" fill="' + lvl.color + '"/>';
+    html += '<circle class="uv-point" data-idx="' + i + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3" fill="' + lvl.color + '" stroke="var(--bg-deep)" stroke-width="1"/>';
   });
 
   html += '</svg>';
@@ -1417,23 +1427,14 @@ function renderUV(hourly) {
   // Tidsetiketter under grafen
   html += '<div class="uv-time-labels">';
   points.forEach((p, i) => {
-    // Visa var 2:a eller 3:e etikett beroende på antal
-    if (i === 0 || i === points.length - 1 || (points.length <= 8 ? true : i % 2 === 0)) {
+    // Visa färre etiketter för tydlighet
+    const showLabel = i === 0 || i === points.length - 1 ||
+      (points.length <= 7) ||
+      (points.length <= 10 && i % 2 === 0) ||
+      (points.length > 10 && i % 3 === 0);
+    if (showLabel) {
       const leftPercent = (p.x / width) * 100;
       html += '<span class="uv-time-label" style="left:' + leftPercent.toFixed(1) + '%">' + p.time + '</span>';
-    }
-  });
-  html += '</div>';
-
-  // UV-värden ovanför punkter
-  html += '<div class="uv-value-labels">';
-  const peakIdx = points.reduce((maxIdx, p, i, arr) => p.uv > arr[maxIdx].uv ? i : maxIdx, 0);
-  points.forEach((p, i) => {
-    // Visa första, sista och max-värdet
-    if (i === 0 || i === points.length - 1 || i === peakIdx) {
-      const leftPercent = (p.x / width) * 100;
-      const lvl = getUVLevel(p.uv);
-      html += '<span class="uv-value-label" style="left:' + leftPercent.toFixed(1) + '%;color:' + lvl.color + '">' + p.uv + '</span>';
     }
   });
   html += '</div>';
@@ -1467,6 +1468,63 @@ function renderUV(hourly) {
     toggle.addEventListener('click', () => {
       uvSection.classList.toggle('open');
     });
+  }
+
+  // Touch/mouse interaktion för diagrammet
+  const container = document.getElementById('uvChartContainer');
+  const tooltip = document.getElementById('uvTooltip');
+  const tooltipValue = document.getElementById('uvTooltipValue');
+  const tooltipTime = document.getElementById('uvTooltipTime');
+  const indicator = document.getElementById('uvIndicator');
+
+  if (container && tooltip && indicator) {
+    const updateTooltip = (clientX) => {
+      const rect = container.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const percent = Math.max(0, Math.min(1, x / rect.width));
+      const idx = Math.round(percent * (points.length - 1));
+      const point = points[idx];
+
+      if (point) {
+        const lvl = getUVLevel(point.uv);
+        tooltipValue.textContent = 'UV ' + point.uv;
+        tooltipValue.style.color = lvl.color;
+        tooltipTime.textContent = point.time + ':00';
+
+        // Positionera tooltip
+        const leftPercent = (point.x / width) * 100;
+        tooltip.style.left = leftPercent + '%';
+        tooltip.style.display = 'flex';
+
+        // Positionera indikator
+        indicator.style.left = leftPercent + '%';
+        indicator.style.display = 'block';
+        indicator.style.background = lvl.color;
+      }
+    };
+
+    const hideTooltip = () => {
+      tooltip.style.display = 'none';
+      indicator.style.display = 'none';
+    };
+
+    // Touch events
+    container.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      updateTooltip(e.touches[0].clientX);
+    }, { passive: false });
+
+    container.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      updateTooltip(e.touches[0].clientX);
+    }, { passive: false });
+
+    container.addEventListener('touchend', hideTooltip);
+
+    // Mouse events
+    container.addEventListener('mouseenter', (e) => updateTooltip(e.clientX));
+    container.addEventListener('mousemove', (e) => updateTooltip(e.clientX));
+    container.addEventListener('mouseleave', hideTooltip);
   }
 }
 
