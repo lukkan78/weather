@@ -496,6 +496,141 @@ async function fetchSMHIWarnings(lat, lon) {
   }
 }
 
+// ── API: ICON-EU Ensemble (40 medlemmar, 13km, 5 dagar) ─────────────────────
+async function fetchIconEuEnsemble(lat, lon) {
+  try {
+    const url =
+      'https://ensemble-api.open-meteo.com/v1/ensemble?' +
+      'latitude=' + lat + '&longitude=' + lon +
+      '&models=icon_eu' +
+      '&current=precipitation,wind_speed_10m,wind_gusts_10m' +
+      '&hourly=precipitation,wind_speed_10m,wind_gusts_10m' +
+      '&daily=precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max' +
+      '&wind_speed_unit=ms' +
+      '&timezone=auto';
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+
+    // Beräkna statistik från ensemble-medlemmar
+    const calcStats = (values) => {
+      if (!values || !values.length) return null;
+      const valid = values.filter(v => v != null && !isNaN(v));
+      if (!valid.length) return null;
+      valid.sort((a, b) => a - b);
+      const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+      const min = valid[0];
+      const max = valid[valid.length - 1];
+      const p10 = valid[Math.floor(valid.length * 0.1)] ?? min;
+      const p90 = valid[Math.floor(valid.length * 0.9)] ?? max;
+      return { mean: round1(mean), min: round1(min), max: round1(max), p10: round1(p10), p90: round1(p90) };
+    };
+
+    // Current - samla alla medlemmars värden
+    const currentPrecip = [];
+    const currentWind = [];
+    const currentGust = [];
+
+    // Hämta alla medlemmars current-värden
+    for (let m = 0; m < 40; m++) {
+      const suffix = m === 0 ? '' : '_member' + pad2(m);
+      if (d.current?.['precipitation' + suffix] != null) {
+        currentPrecip.push(d.current['precipitation' + suffix]);
+      }
+      if (d.current?.['wind_speed_10m' + suffix] != null) {
+        currentWind.push(d.current['wind_speed_10m' + suffix]);
+      }
+      if (d.current?.['wind_gusts_10m' + suffix] != null) {
+        currentGust.push(d.current['wind_gusts_10m' + suffix]);
+      }
+    }
+
+    // Hourly ensemble per timme
+    const hourlyEns = [];
+    if (d.hourly?.time) {
+      for (let i = 0; i < d.hourly.time.length; i++) {
+        const precipVals = [];
+        const windVals = [];
+        const gustVals = [];
+
+        for (let m = 0; m < 40; m++) {
+          const suffix = m === 0 ? '' : '_member' + pad2(m);
+          const pKey = 'precipitation' + suffix;
+          const wKey = 'wind_speed_10m' + suffix;
+          const gKey = 'wind_gusts_10m' + suffix;
+
+          if (d.hourly[pKey]?.[i] != null) precipVals.push(d.hourly[pKey][i]);
+          if (d.hourly[wKey]?.[i] != null) windVals.push(d.hourly[wKey][i]);
+          if (d.hourly[gKey]?.[i] != null) gustVals.push(d.hourly[gKey][i]);
+        }
+
+        hourlyEns.push({
+          time: d.hourly.time[i],
+          precip: calcStats(precipVals),
+          wind: calcStats(windVals),
+          gust: calcStats(gustVals),
+        });
+      }
+    }
+
+    // Daily ensemble
+    const dailyEns = [];
+    if (d.daily?.time) {
+      for (let i = 0; i < d.daily.time.length; i++) {
+        const precipVals = [];
+        const windVals = [];
+        const gustVals = [];
+
+        for (let m = 0; m < 40; m++) {
+          const suffix = m === 0 ? '' : '_member' + pad2(m);
+          const pKey = 'precipitation_sum' + suffix;
+          const wKey = 'wind_speed_10m_max' + suffix;
+          const gKey = 'wind_gusts_10m_max' + suffix;
+
+          if (d.daily[pKey]?.[i] != null) precipVals.push(d.daily[pKey][i]);
+          if (d.daily[wKey]?.[i] != null) windVals.push(d.daily[wKey][i]);
+          if (d.daily[gKey]?.[i] != null) gustVals.push(d.daily[gKey][i]);
+        }
+
+        // Beräkna sannolikhet för nederbörd (% av medlemmar med > 0.1mm)
+        const precipProb = precipVals.length
+          ? Math.round((precipVals.filter(v => v > 0.1).length / precipVals.length) * 100)
+          : null;
+
+        dailyEns.push({
+          time: d.daily.time[i],
+          precip: calcStats(precipVals),
+          precipProb,
+          wind: calcStats(windVals),
+          gust: calcStats(gustVals),
+        });
+      }
+    }
+
+    // Beräkna current precip probability
+    const currentPrecipProb = currentPrecip.length
+      ? Math.round((currentPrecip.filter(v => v > 0.1).length / currentPrecip.length) * 100)
+      : null;
+
+    return {
+      source: 'ICON-EU Ensemble',
+      members: 40,
+      current: {
+        precip: calcStats(currentPrecip),
+        precipProb: currentPrecipProb,
+        wind: calcStats(currentWind),
+        gust: calcStats(currentGust),
+      },
+      hourly: hourlyEns,
+      daily: dailyEns,
+    };
+  } catch (e) {
+    console.warn('ICON-EU Ensemble fel:', e);
+    return null;
+  }
+}
+
 // ── API: Luftkvalitet med Copernicus CAMS Ensemble ──────────────────────────
 
 // Hämta från CAMS Europe (Copernicus regional modell, hög upplösning för Europa)
@@ -1012,7 +1147,7 @@ function calcEnsemble(results) {
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────
-function renderCurrent(ens) {
+function renderCurrent(ens, iconEuEns) {
   currentIcon.textContent   = ens.current.icon;
   currentTemp.textContent   = ens.current.temp;
   currentDesc.textContent   = ens.current.desc;
@@ -1028,14 +1163,36 @@ function renderCurrent(ens) {
     }
   }
 
-  // Vind med byvind
+  // Vind med byvind - använd ICON-EU ensemble om tillgängligt
+  let windText = ens.current.wind + ' m/s';
+  if (iconEuEns?.current?.wind) {
+    const w = iconEuEns.current.wind;
+    if (w.min !== w.max) {
+      windText = w.min + '-' + w.max + ' m/s';
+    }
+  }
   const gustText = ens.current.windGust > ens.current.wind
     ? ' (' + ens.current.windGust + ')'
     : '';
-  currentWind.textContent   = ens.current.wind + ' m/s' + gustText + ' ' + (ens.current.windDir || '');
+  currentWind.textContent = windText + gustText + ' ' + (ens.current.windDir || '');
 
   currentHumid.textContent  = ens.current.humidity + ' %';
-  currentPrecip.textContent = ens.current.precip   + ' mm';
+
+  // Nederbörd - använd ICON-EU ensemble om tillgängligt
+  let precipText = ens.current.precip + ' mm';
+  if (iconEuEns?.current?.precip) {
+    const p = iconEuEns.current.precip;
+    if (p.max > 0 && p.min !== p.max) {
+      precipText = p.min + '-' + p.max + ' mm';
+    } else if (p.mean > 0) {
+      precipText = p.mean + ' mm';
+    }
+    // Lägg till sannolikhet om relevant
+    if (iconEuEns.current.precipProb != null && iconEuEns.current.precipProb > 0 && iconEuEns.current.precipProb < 100) {
+      precipText += ' (' + iconEuEns.current.precipProb + '%)';
+    }
+  }
+  currentPrecip.textContent = precipText;
 
   // Lufttryck
   if (currentPressure && ens.current.pressure > 0) {
@@ -1179,7 +1336,7 @@ function renderSources(results) {
   });
 }
 
-function renderHourly(hourly) {
+function renderHourly(hourly, iconEuEns) {
   hourlyScroll.innerHTML = '';
   cachedHourly = hourly;
   const now   = Date.now();
@@ -1187,23 +1344,51 @@ function renderHourly(hourly) {
     .filter(h => new Date(h.time).getTime() >= now - 1800000)  // 30 min grace
     .slice(0, 24);
 
+  // Bygg en map för snabb uppslagning av ICON-EU ensemble-data
+  const ensMap = new Map();
+  if (iconEuEns?.hourly) {
+    iconEuEns.hourly.forEach(e => {
+      const key = e.time.slice(0, 13);  // "2024-01-15T14"
+      ensMap.set(key, e);
+    });
+  }
+
   items.forEach((h, i) => {
     const el    = document.createElement('div');
     el.className = 'hourly-item';
     const label  = (i === 0 && new Date(h.time).getTime() <= now + 1800000) ? 'Nu' : fmtTime(h.time);
+
+    // Kolla om vi har ensemble-data för denna timme
+    const ensKey = h.time.slice(0, 13);
+    const ens = ensMap.get(ensKey);
+
+    // Visa nederbördsintervall om ensemble finns
+    let precipHtml = h.precip + '%';
+    if (ens?.precip && ens.precip.max > 0) {
+      precipHtml = ens.precip.min + '-' + ens.precip.max + ' mm';
+    }
+
     el.innerHTML =
         '<div class="hourly-time">'   + label      + '</div>'
       + '<div class="hourly-icon">'   + h.icon     + '</div>'
       + '<div class="hourly-temp">'   + h.temp     + '°</div>'
-      + '<div class="hourly-precip">💧 ' + h.precip + '%</div>';
+      + '<div class="hourly-precip">💧 ' + precipHtml + '</div>';
     hourlyScroll.appendChild(el);
   });
 }
 
-function renderDaily(daily) {
+function renderDaily(daily, iconEuEns) {
   dailyList.innerHTML = '';
   cachedDaily = daily;
   if (!daily.length) return;
+
+  // Bygg en map för snabb uppslagning av ICON-EU ensemble-data
+  const ensMap = new Map();
+  if (iconEuEns?.daily) {
+    iconEuEns.daily.forEach(e => {
+      ensMap.set(e.time, e);
+    });
+  }
 
   const allMin = Math.min(...daily.map(d => d.tempMin));
   const allMax = Math.max(...daily.map(d => d.tempMax));
@@ -1222,6 +1407,23 @@ function renderDaily(daily) {
                    : spread > 6  ? 'var(--confidence-medium)'
                    :               'var(--confidence-high)';
 
+    // Hämta ensemble-data för dagen (om inom 5-dagars räckvidden)
+    const ens = ensMap.get(d.time);
+
+    // Visa nederbördsinfo - använd ensemble om tillgängligt
+    let precipHtml;
+    if (ens?.precip && ens.precip.max > 0) {
+      // Visa intervall + sannolikhet från ensemble
+      precipHtml = ens.precip.min + '-' + ens.precip.max + ' mm';
+      if (ens.precipProb != null && ens.precipProb < 100) {
+        precipHtml += ' (' + ens.precipProb + '%)';
+      }
+    } else if (ens?.precipProb != null) {
+      precipHtml = ens.precipProb + '%';
+    } else {
+      precipHtml = (d.precipProb ?? 0) + '%';
+    }
+
     el.innerHTML =
         '<div class="daily-day">' + dayLabel + '</div>'
       + '<div class="daily-icon">' + (d.icon || '☀️') + '</div>'
@@ -1234,7 +1436,7 @@ function renderDaily(daily) {
       + '</div>'
       + '<div class="daily-confidence">'
         + '<span class="confidence-dot" style="background:' + dotColor + '"></span>'
-        + '<span class="daily-confidence-text">💧 ' + (d.precipProb ?? 0) + '%</span>'
+        + '<span class="daily-confidence-text">💧 ' + precipHtml + '</span>'
       + '</div>';
 
     el.addEventListener('click', () => showDayDetail(index));
@@ -1331,7 +1533,7 @@ async function fetchWeather(lat, lon, name) {
 
   try {
     // Hämta väderdata från alla källor parallellt
-    const [weatherSettled, warnings, airQuality, pollen] = await Promise.all([
+    const [weatherSettled, warnings, airQuality, pollen, iconEuEns] = await Promise.all([
       Promise.allSettled([
         fetchOpenMeteo(lat, lon),
         fetchYR(lat, lon),
@@ -1340,6 +1542,7 @@ async function fetchWeather(lat, lon, name) {
       fetchSMHIWarnings(lat, lon),
       fetchAirQualityEnsemble(lat, lon),  // Copernicus CAMS ensemble
       fetchPollen(lat, lon),
+      fetchIconEuEnsemble(lat, lon),  // ICON-EU ensemble för nederbörd/vind
     ]);
 
     const names   = ['Open-Meteo', 'YR', 'SMHI'];
@@ -1351,15 +1554,20 @@ async function fetchWeather(lat, lon, name) {
 
     const ens = calcEnsemble(results);
 
+    // Lägg till ICON-EU ensemble-data till ens-objektet
+    if (iconEuEns) {
+      ens.iconEuEns = iconEuEns;
+    }
+
     locationName.textContent   = name;
     locationCoords.textContent = lat.toFixed(4) + '°, ' + lon.toFixed(4) + '°';
 
     cachedResults = results;  // Spara för jämförelse-modal
 
-    renderCurrent(ens);
+    renderCurrent(ens, iconEuEns);
     renderSources(results);
-    renderHourly(ens.hourly);
-    renderDaily(ens.daily);
+    renderHourly(ens.hourly, iconEuEns);
+    renderDaily(ens.daily, iconEuEns);
 
     // Nya funktioner
     renderWarnings(warnings);
@@ -1375,7 +1583,7 @@ async function fetchWeather(lat, lon, name) {
     // Persist for offline + recent location
     try {
       localStorage.setItem('väder_cache', JSON.stringify({
-        loc: lastLoc, results, ens, warnings, airQuality, pollen, ts: Date.now()
+        loc: lastLoc, results, ens, warnings, airQuality, pollen, iconEuEns, ts: Date.now()
       }));
       // Spara senaste plats separat (för snabbval)
       localStorage.setItem('väder_recent', JSON.stringify(lastLoc));
@@ -1401,10 +1609,10 @@ function loadCache() {
     cachedResults = c.results;  // Återställ för jämförelse-modal
     locationName.textContent   = c.loc.name;
     locationCoords.textContent = c.loc.lat.toFixed(4) + '°, ' + c.loc.lon.toFixed(4) + '°';
-    renderCurrent(c.ens);
+    renderCurrent(c.ens, c.iconEuEns);
     renderSources(c.results);
-    renderHourly(c.ens.hourly);
-    renderDaily(c.ens.daily);
+    renderHourly(c.ens.hourly, c.iconEuEns);
+    renderDaily(c.ens.daily, c.iconEuEns);
 
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
