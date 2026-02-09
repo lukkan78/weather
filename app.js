@@ -494,47 +494,189 @@ async function fetchSMHIWarnings(lat, lon) {
   }
 }
 
-// ── API: Open-Meteo Luftkvalitet + Pollen ───────────────────────────────────
-async function fetchAirQuality(lat, lon) {
+// ── API: Luftkvalitet med Copernicus CAMS Ensemble ──────────────────────────
+
+// Hämta från CAMS Europe (Copernicus regional modell, hög upplösning för Europa)
+async function fetchCAMSEurope(lat, lon) {
   try {
     const url =
       'https://air-quality-api.open-meteo.com/v1/air-quality?' +
       'latitude=' + lat + '&longitude=' + lon +
-      '&current=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone' +
-      '&hourly=european_aqi,pm10,pm2_5' +
-      '&forecast_days=1';
+      '&current=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide' +
+      '&hourly=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone' +
+      '&domains=cams_europe' +
+      '&forecast_days=2';
 
     const res = await fetch(url);
     if (!res.ok) return null;
     const d = await res.json();
-
-    const aqi = d.current?.european_aqi ?? 0;
-    const pm25 = d.current?.pm2_5 ?? 0;
-    const pm10 = d.current?.pm10 ?? 0;
-    const no2 = d.current?.nitrogen_dioxide ?? 0;
-    const o3 = d.current?.ozone ?? 0;
-
-    // AQI kategorier (European AQI)
-    let category, color;
-    if (aqi <= 20) { category = 'Utmärkt'; color = 'var(--confidence-high)'; }
-    else if (aqi <= 40) { category = 'Bra'; color = 'var(--confidence-high)'; }
-    else if (aqi <= 60) { category = 'Måttlig'; color = 'var(--confidence-medium)'; }
-    else if (aqi <= 80) { category = 'Dålig'; color = 'var(--confidence-low)'; }
-    else if (aqi <= 100) { category = 'Mycket dålig'; color = 'var(--confidence-low)'; }
-    else { category = 'Extremt dålig'; color = 'var(--confidence-low)'; }
+    const c = d.current || {};
 
     return {
-      aqi,
-      category,
-      color,
-      pm25: round1(pm25),
-      pm10: round1(pm10),
-      no2: round1(no2),
-      o3: round1(o3),
+      source: 'CAMS Europe',
+      aqi: c.european_aqi ?? null,
+      pm25: c.pm2_5 ?? null,
+      pm10: c.pm10 ?? null,
+      no2: c.nitrogen_dioxide ?? null,
+      o3: c.ozone ?? null,
+      so2: c.sulphur_dioxide ?? null,
+      co: c.carbon_monoxide ?? null,
+      hourly: d.hourly,
     };
   } catch {
     return null;
   }
+}
+
+// Hämta från CAMS Global (Copernicus global modell)
+async function fetchCAMSGlobal(lat, lon) {
+  try {
+    const url =
+      'https://air-quality-api.open-meteo.com/v1/air-quality?' +
+      'latitude=' + lat + '&longitude=' + lon +
+      '&current=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide' +
+      '&hourly=european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone' +
+      '&domains=cams_global' +
+      '&forecast_days=2';
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const c = d.current || {};
+
+    return {
+      source: 'CAMS Global',
+      aqi: c.european_aqi ?? null,
+      pm25: c.pm2_5 ?? null,
+      pm10: c.pm10 ?? null,
+      no2: c.nitrogen_dioxide ?? null,
+      o3: c.ozone ?? null,
+      so2: c.sulphur_dioxide ?? null,
+      co: c.carbon_monoxide ?? null,
+      hourly: d.hourly,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Beräkna ensemble från CAMS Europe och CAMS Global
+function calcAirQualityEnsemble(results) {
+  const valid = results.filter(r => r && r.aqi != null);
+  if (!valid.length) return null;
+
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const stdDev = arr => {
+    if (arr.length < 2) return 0;
+    const mean = avg(arr);
+    return Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length);
+  };
+
+  // Samla alla värden
+  const aqis = valid.map(r => r.aqi).filter(v => v != null);
+  const pm25s = valid.map(r => r.pm25).filter(v => v != null);
+  const pm10s = valid.map(r => r.pm10).filter(v => v != null);
+  const no2s = valid.map(r => r.no2).filter(v => v != null);
+  const o3s = valid.map(r => r.o3).filter(v => v != null);
+  const so2s = valid.map(r => r.so2).filter(v => v != null);
+  const cos = valid.map(r => r.co).filter(v => v != null);
+
+  // Ensemble medelvärden
+  const ensAqi = Math.round(avg(aqis));
+  const ensPm25 = round1(avg(pm25s));
+  const ensPm10 = round1(avg(pm10s));
+  const ensNo2 = round1(avg(no2s));
+  const ensO3 = round1(avg(o3s));
+  const ensSo2 = so2s.length ? round1(avg(so2s)) : null;
+  const ensCo = cos.length ? round1(avg(cos)) : null;
+
+  // Beräkna spridning (osäkerhet)
+  const aqiSpread = stdDev(aqis);
+  const pm25Spread = stdDev(pm25s);
+
+  // Konfidens baserat på antalet källor och spridning
+  let confidence;
+  if (valid.length === 1) {
+    confidence = 70;
+  } else {
+    // Lägre spridning = högre konfidens
+    const spreadPenalty = Math.min(aqiSpread * 2, 30);
+    confidence = Math.max(40, Math.min(95, Math.round(90 - spreadPenalty + (valid.length - 1) * 5)));
+  }
+
+  // AQI kategorier (European AQI)
+  let category, color;
+  if (ensAqi <= 20) { category = 'Utmärkt'; color = 'var(--confidence-high)'; }
+  else if (ensAqi <= 40) { category = 'Bra'; color = 'var(--confidence-high)'; }
+  else if (ensAqi <= 60) { category = 'Måttlig'; color = 'var(--confidence-medium)'; }
+  else if (ensAqi <= 80) { category = 'Dålig'; color = 'var(--confidence-low)'; }
+  else if (ensAqi <= 100) { category = 'Mycket dålig'; color = 'var(--confidence-low)'; }
+  else { category = 'Extremt dålig'; color = 'var(--confidence-low)'; }
+
+  // Beräkna ensemble för timprognos
+  const hourlyEnsemble = calcAQHourlyEnsemble(valid);
+
+  return {
+    aqi: ensAqi,
+    category,
+    color,
+    pm25: ensPm25,
+    pm10: ensPm10,
+    no2: ensNo2,
+    o3: ensO3,
+    so2: ensSo2,
+    co: ensCo,
+    spread: round1(aqiSpread),
+    pm25Spread: round1(pm25Spread),
+    confidence,
+    sourceCount: valid.length,
+    sources: valid.map(r => r.source),
+    hourly: hourlyEnsemble,
+  };
+}
+
+// Ensemble för timvis luftkvalitetsprognos
+function calcAQHourlyEnsemble(results) {
+  const hourlyByTime = new Map();
+
+  results.forEach(r => {
+    if (!r.hourly?.time) return;
+    r.hourly.time.forEach((t, i) => {
+      const key = t.slice(0, 13);
+      if (!hourlyByTime.has(key)) {
+        hourlyByTime.set(key, { aqis: [], pm25s: [], pm10s: [], no2s: [], o3s: [] });
+      }
+      const entry = hourlyByTime.get(key);
+      if (r.hourly.european_aqi?.[i] != null) entry.aqis.push(r.hourly.european_aqi[i]);
+      if (r.hourly.pm2_5?.[i] != null) entry.pm25s.push(r.hourly.pm2_5[i]);
+      if (r.hourly.pm10?.[i] != null) entry.pm10s.push(r.hourly.pm10[i]);
+      if (r.hourly.nitrogen_dioxide?.[i] != null) entry.no2s.push(r.hourly.nitrogen_dioxide[i]);
+      if (r.hourly.ozone?.[i] != null) entry.o3s.push(r.hourly.ozone[i]);
+    });
+  });
+
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  return Array.from(hourlyByTime.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(0, 48)  // 48 timmar framåt
+    .map(([time, data]) => ({
+      time: time + ':00',
+      aqi: data.aqis.length ? Math.round(avg(data.aqis)) : null,
+      pm25: data.pm25s.length ? round1(avg(data.pm25s)) : null,
+      pm10: data.pm10s.length ? round1(avg(data.pm10s)) : null,
+      sources: data.aqis.length,
+    }));
+}
+
+// Wrapper för att hämta luftkvalitet med ensemble
+async function fetchAirQualityEnsemble(lat, lon) {
+  const [camsEurope, camsGlobal] = await Promise.all([
+    fetchCAMSEurope(lat, lon),
+    fetchCAMSGlobal(lat, lon),
+  ]);
+
+  return calcAirQualityEnsemble([camsEurope, camsGlobal]);
 }
 
 // ── API: Open-Meteo Pollen ──────────────────────────────────────────────────
@@ -946,15 +1088,29 @@ function renderAirQuality(aq, pollen) {
 
   if (aq) {
     const barWidth = Math.min(aq.aqi, 100);
-    html += '<div class="aqi-main">' +
+
+    // Ensemble info (Copernicus CAMS)
+    const ensembleInfo = aq.sourceCount > 1
+      ? '<div class="aqi-ensemble">' +
+        '<span class="ensemble-badge">🛰️ Copernicus CAMS Ensemble</span>' +
+        '<span class="ensemble-sources">' + aq.sources.join(' + ') + '</span>' +
+        (aq.spread > 0 ? '<span class="ensemble-spread">±' + aq.spread + ' AQI</span>' : '') +
+        '</div>'
+      : '<div class="aqi-ensemble"><span class="ensemble-badge">🛰️ ' + (aq.sources?.[0] || 'CAMS') + '</span></div>';
+
+    html += ensembleInfo +
+      '<div class="aqi-main">' +
       '<div class="aqi-value" style="color:' + aq.color + '">AQI ' + aq.aqi + '</div>' +
       '<div class="aqi-label">' + aq.category + '</div>' +
       '<div class="aqi-bar"><div class="aqi-fill" style="width:' + barWidth + '%;background:' + aq.color + '"></div></div>' +
       '</div>' +
       '<div class="aqi-details">' +
-      '<span>PM2.5: ' + aq.pm25 + '</span>' +
-      '<span>PM10: ' + aq.pm10 + '</span>' +
-      '<span>O₃: ' + aq.o3 + '</span>' +
+      '<span>PM2.5: ' + aq.pm25 + ' µg/m³</span>' +
+      '<span>PM10: ' + aq.pm10 + ' µg/m³</span>' +
+      '<span>O₃: ' + aq.o3 + ' µg/m³</span>' +
+      '<span>NO₂: ' + aq.no2 + ' µg/m³</span>' +
+      (aq.so2 != null ? '<span>SO₂: ' + aq.so2 + ' µg/m³</span>' : '') +
+      (aq.co != null ? '<span>CO: ' + aq.co + ' µg/m³</span>' : '') +
       '</div>';
   }
 
@@ -1180,7 +1336,7 @@ async function fetchWeather(lat, lon, name) {
         fetchSMHI(lat, lon),
       ]),
       fetchSMHIWarnings(lat, lon),
-      fetchAirQuality(lat, lon),
+      fetchAirQualityEnsemble(lat, lon),  // Copernicus CAMS ensemble
       fetchPollen(lat, lon),
     ]);
 
