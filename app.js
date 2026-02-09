@@ -251,8 +251,8 @@ async function fetchOpenMeteo(lat, lon) {
     'https://api.open-meteo.com/v1/forecast?' +
     'latitude='  + lat  + '&longitude=' + lon +
     '&current_weather=true' +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,windgusts_10m,pressure_msl,weathercode' +
-    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,precipitation_probability_max,weathercode' +
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,windspeed_10m,winddirection_10m,windgusts_10m,pressure_msl,weathercode,uv_index' +
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,precipitation_probability_max,weathercode,uv_index_max' +
     '&timezone=auto&forecast_days=16' +
     '&wind_speed_unit=ms';  // Vindhastighet i m/s istället för km/h
 
@@ -287,6 +287,7 @@ async function fetchOpenMeteo(lat, lon) {
       humidity: d.hourly.relative_humidity_2m[idx] ?? 0,
       pressure: Math.round(d.hourly.pressure_msl?.[idx] ?? 0),
       precip:   round1(d.hourly.precipitation[idx] ?? 0),
+      uv:       round1(d.hourly.uv_index?.[idx] ?? 0),
       icon:     wmo(cur.weathercode, isDay).icon,
       desc:     wmo(cur.weathercode, isDay).desc,
     },
@@ -304,6 +305,7 @@ async function fetchOpenMeteo(lat, lon) {
         windDir:    degToDir(d.hourly.winddirection_10m?.[i]),
         humidity:   d.hourly.relative_humidity_2m?.[i] ?? 0,
         pressure:   Math.round(d.hourly.pressure_msl?.[i] ?? 0),
+        uv:         round1(d.hourly.uv_index?.[i] ?? 0),
       };
     }),
     daily: d.daily.time.map((t, i) => ({
@@ -314,6 +316,7 @@ async function fetchOpenMeteo(lat, lon) {
       precipProb: d.daily.precipitation_probability_max?.[i] ?? 0,
       wind:       round1(d.daily.windspeed_10m_max?.[i] ?? 0),
       windGust:   round1(d.daily.windgusts_10m_max?.[i] ?? 0),
+      uvMax:      round1(d.daily.uv_index_max?.[i] ?? 0),
       icon:       wmo(d.daily.weathercode?.[i] ?? 0, true).icon,
     })),
   };
@@ -1054,6 +1057,7 @@ function calcEnsemble(results) {
         wind:       data.winds.length ? round1(avg(data.winds)) : (p.wind ?? 0),
         windDir:    p.windDir,
         humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
+        uv:         p.uv ?? 0,  // UV endast från Open-Meteo
         sources:    sourceCount,  // Antal källor för denna timme
       };
     });
@@ -1116,10 +1120,11 @@ function calcEnsemble(results) {
         tempMax: round1(d.tempMax * (1 - weight) + avgTempMax * weight),
         wind:    round1(d.wind * (1 - weight) + avgWind * weight),
         precip:  round1(d.precip * (1 - weight) + totalPrecip * weight),
+        uvMax:   d.uvMax ?? 0,
         sources: sourceCount,
       };
     }
-    return { ...d, sources: sourceCount };
+    return { ...d, uvMax: d.uvMax ?? 0, sources: sourceCount };
   });
 
   // Beräkna "känns som" temperatur
@@ -1135,6 +1140,7 @@ function calcEnsemble(results) {
       humidity: Math.round(avgHumid),
       pressure: avgPressure,
       precip:   round1(avgPrecip),
+      uv:       primary.current.uv ?? 0,  // UV endast från Open-Meteo
       icon:     primary.current.icon,
       desc:     primary.current.desc,
     },
