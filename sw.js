@@ -1,10 +1,10 @@
-const CACHE     = 'väder-v21';
-const CACHE_API = 'väder-v21-api';
+const CACHE     = 'väder-v22';
+const CACHE_API = 'väder-v22-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
 self.addEventListener('install', e => {
-  self.skipWaiting();
+  // Vänta på att användaren klickar "Uppdatera" innan skipWaiting
   e.waitUntil(
     caches.open(CACHE).then(c => c.addAll(STATIC))
   );
@@ -71,4 +71,11 @@ self.addEventListener('fetch', e => {
 
   // Fallback för övriga externa requests → network only
   e.respondWith(fetch(e.request));
+});
+
+// ── Message handler för manuell uppdatering ─────────────────────────────────
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
