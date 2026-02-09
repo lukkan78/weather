@@ -43,6 +43,7 @@ const currentGust    = $('currentGust');
 const warningsSection= $('warningsSection');
 const airQualitySection = $('airQualitySection');
 const forecastText   = $('forecastText');
+const forecastSummary= $('forecastSummary');
 const searchClear    = $('searchClear');
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -593,60 +594,87 @@ function calcFeelsLike(temp, wind, humidity) {
 
 // ── Generera beskrivande prognos ────────────────────────────────────────────
 function generateForecastText(ens, daily, warnings) {
-  const parts = [];
+  const temp = ens.current.temp;
+  const wind = ens.current.wind;
+  const humidity = ens.current.humidity;
+  const desc = ens.current.desc.toLowerCase();
   const today = daily[0];
   const tomorrow = daily[1];
 
-  // Nuvarande väder
-  const desc = ens.current.desc.toLowerCase();
-  const temp = ens.current.temp;
-  const wind = ens.current.wind;
-
   // Tid på dygnet
   const hour = new Date().getHours();
-  const timeOfDay = hour < 12 ? 'förmiddagen' : hour < 18 ? 'eftermiddagen' : 'kvällen';
+  const isNight = hour < 6 || hour >= 21;
+  const isMorning = hour >= 6 && hour < 12;
+  const isAfternoon = hour >= 12 && hour < 18;
 
-  // Väderläge just nu
-  if (desc.includes('regn')) {
-    parts.push('Regnigt väder under ' + timeOfDay + '.');
+  // Temperaturkänsla
+  let tempFeel = '';
+  if (temp < -10) tempFeel = 'mycket kallt';
+  else if (temp < 0) tempFeel = 'kallt';
+  else if (temp < 10) tempFeel = 'svalt';
+  else if (temp < 18) tempFeel = 'behagligt';
+  else if (temp < 25) tempFeel = 'varmt';
+  else tempFeel = 'mycket varmt';
+
+  // Bygg huvudbeskrivning
+  let main = '';
+  if (desc.includes('regn') && desc.includes('lätt')) {
+    main = 'Lätt regn och ' + tempFeel;
+  } else if (desc.includes('regn')) {
+    main = 'Regnigt och ' + tempFeel;
   } else if (desc.includes('snö')) {
-    parts.push('Snöfall under ' + timeOfDay + '.');
+    main = 'Snöfall och ' + tempFeel;
+  } else if (desc.includes('dimma')) {
+    main = 'Dimmigt och ' + tempFeel;
   } else if (desc.includes('molnigt') || desc.includes('mulet')) {
-    parts.push('Molnigt under ' + timeOfDay + '.');
-  } else if (desc.includes('klart')) {
-    parts.push('Klart och ' + (temp > 20 ? 'varmt' : temp < 5 ? 'kallt' : 'behagligt') + ' väder.');
+    main = 'Molnigt och ' + tempFeel;
+  } else if (desc.includes('delvis')) {
+    main = 'Växlande molnighet, ' + tempFeel;
+  } else if (desc.includes('klart') || desc.includes('sol')) {
+    if (isNight) {
+      main = 'Klar himmel och ' + tempFeel;
+    } else {
+      main = 'Soligt och ' + tempFeel;
+    }
   } else {
-    parts.push(ens.current.desc + '.');
+    main = ens.current.desc + ', ' + tempFeel;
   }
 
-  // Vind
+  // Lägg till tid
+  if (isMorning) main += ' under morgonen';
+  else if (isAfternoon) main += ' under eftermiddagen';
+  else if (isNight) main += ' ikväll';
+  main += '.';
+
+  // Vindkommentar
   if (wind > 10) {
-    parts.push('Hård vind, ' + wind + ' m/s.');
+    main += ' Kraftig vind.';
   } else if (wind > 6) {
-    parts.push('Frisk vind.');
+    main += ' Blåsigt.';
   }
 
-  // Temperaturutveckling
+  // Jämförelse med imorgon
   if (tomorrow && today) {
     const tempDiff = tomorrow.tempMax - today.tempMax;
-    if (tempDiff <= -3) {
-      parts.push('Kallare imorgon – klä dig varmare.');
+    if (tempDiff <= -5) {
+      main += ' Betydligt kallare imorgon.';
+    } else if (tempDiff <= -3) {
+      main += ' Kallare imorgon – ta med extra lager.';
+    } else if (tempDiff >= 5) {
+      main += ' Betydligt varmare imorgon.';
     } else if (tempDiff >= 3) {
-      parts.push('Varmare imorgon.');
+      main += ' Varmare imorgon.';
+    }
+
+    // Nederbörd imorgon
+    if (tomorrow.precipProb > 70) {
+      main += ' Trolig nederbörd imorgon.';
+    } else if (tomorrow.precipProb > 50) {
+      main += ' Risk för nederbörd imorgon.';
     }
   }
 
-  // Nederbörd imorgon
-  if (tomorrow && tomorrow.precipProb > 50) {
-    parts.push('Risk för nederbörd imorgon (' + tomorrow.precipProb + '%).');
-  }
-
-  // Varningar
-  if (warnings && warnings.length > 0) {
-    parts.push('⚠️ ' + warnings[0].headline);
-  }
-
-  return parts.join(' ');
+  return main;
 }
 
 // ── Ensemble Calculation ───────────────────────────────────────────────────
@@ -954,13 +982,12 @@ function renderAirQuality(aq, pollen) {
 
 // ── Render Prognos-text ─────────────────────────────────────────────────────
 function renderForecastText(text) {
-  const section = $('forecastTextSection');
-  if (!forecastText || !section) return;
+  if (!forecastSummary) return;
   if (text) {
-    forecastText.textContent = text;
-    section.style.display = 'block';
+    forecastSummary.textContent = text;
+    forecastSummary.style.display = 'block';
   } else {
-    section.style.display = 'none';
+    forecastSummary.style.display = 'none';
   }
 }
 
