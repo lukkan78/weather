@@ -857,7 +857,7 @@ function renderCurrent(ens) {
 
   // Vind med byvind
   const gustText = ens.current.windGust > ens.current.wind + 2
-    ? ' (byar ' + ens.current.windGust + ')'
+    ? ' (' + ens.current.windGust + ')'
     : '';
   currentWind.textContent   = ens.current.wind + ' m/s' + gustText + ' ' + (ens.current.windDir || '');
 
@@ -909,12 +909,16 @@ function renderAirQuality(aq, pollen) {
   }
 
   airQualitySection.style.display = 'block';
-  let html = '<h3 class="section-title">🌬️ Luftkvalitet</h3><div class="air-quality-content">';
+
+  // Collapsible header med AQI-värde
+  const aqiPreview = aq ? ' — AQI ' + aq.aqi + ' (' + aq.category + ')' : '';
+  let html = '<h3 class="section-title section-toggle" id="airQualityToggle">🌬️ Luftkvalitet' + aqiPreview + ' <span class="toggle-icon">▼</span></h3>';
+  html += '<div class="air-quality-content">';
 
   if (aq) {
     const barWidth = Math.min(aq.aqi, 100);
     html += '<div class="aqi-main">' +
-      '<div class="aqi-value" style="color:' + aq.color + '">' + aq.aqi + '</div>' +
+      '<div class="aqi-value" style="color:' + aq.color + '">AQI ' + aq.aqi + '</div>' +
       '<div class="aqi-label">' + aq.category + '</div>' +
       '<div class="aqi-bar"><div class="aqi-fill" style="width:' + barWidth + '%;background:' + aq.color + '"></div></div>' +
       '</div>' +
@@ -937,16 +941,25 @@ function renderAirQuality(aq, pollen) {
 
   html += '</div>';
   airQualitySection.innerHTML = html;
+
+  // Add toggle listener
+  const toggle = document.getElementById('airQualityToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      airQualitySection.classList.toggle('open');
+    });
+  }
 }
 
 // ── Render Prognos-text ─────────────────────────────────────────────────────
 function renderForecastText(text) {
-  if (!forecastText) return;
+  const section = $('forecastTextSection');
+  if (!forecastText || !section) return;
   if (text) {
     forecastText.textContent = text;
-    forecastText.parentElement.style.display = 'block';
+    section.style.display = 'block';
   } else {
-    forecastText.parentElement.style.display = 'none';
+    section.style.display = 'none';
   }
 }
 
