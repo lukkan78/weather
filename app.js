@@ -57,6 +57,7 @@ let selectedSuggest  = -1;
 let suggestions      = [];
 let cachedHourly     = [];
 let cachedDaily      = [];
+let cachedIconEuEns  = null;  // ICON-EU ensemble data för dagsdetaljer
 let cachedResults    = [];  // För jämförelse-modal
 
 // ── WMO Weather Codes → [dayIcon, nightIcon, Swedish label] ───────────────
@@ -1613,6 +1614,7 @@ function renderHourly(hourly, iconEuEns) {
 function renderDaily(daily, iconEuEns) {
   dailyList.innerHTML = '';
   cachedDaily = daily;
+  cachedIconEuEns = iconEuEns;  // Spara för dagsdetaljer
   if (!daily.length) return;
 
   // Bygg en map för snabb uppslagning av ICON-EU ensemble-data
@@ -1690,32 +1692,68 @@ function showDayDetail(index) {
   // Filter hourly data for this day
   const dayHours = cachedHourly.filter(h => h.time.startsWith(day.time));
 
+  // Bygg ensemble-map för denna dag
+  const ensHourlyMap = new Map();
+  if (cachedIconEuEns?.hourly) {
+    cachedIconEuEns.hourly
+      .filter(e => e.time.startsWith(day.time))
+      .forEach(e => {
+        const key = e.time.slice(0, 13);
+        ensHourlyMap.set(key, e);
+      });
+  }
+
+  // Hämta daglig ensemble-data
+  const ensDailyData = cachedIconEuEns?.daily?.find(e => e.time === day.time);
+
   // Summary stats
   const avgWind = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.wind, 0) / dayHours.length) : day.wind;
   const avgHumidity = dayHours.length ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length) : 0;
-  const totalPrecip = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
   const mainWindDir = dayHours.length ? dayHours[Math.floor(dayHours.length / 2)].windDir : '';
+
+  // Använd ensemble för nederbörd om tillgängligt
+  let precipText;
+  if (ensDailyData?.precip && ensDailyData.precip.max > 0) {
+    precipText = ensDailyData.precip.min + '-' + ensDailyData.precip.max + ' mm';
+    if (ensDailyData.precipProb != null) {
+      precipText += ' (' + ensDailyData.precipProb + '%)';
+    }
+  } else {
+    const totalPrecip = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
+    precipText = totalPrecip + ' mm (' + day.precipProb + '%)';
+  }
 
   daySummary.innerHTML =
       '<div class="day-detail-stat"><div class="day-detail-stat-label">🌡️ Temperatur</div><div class="day-detail-stat-value">' + day.tempMin + '° / ' + day.tempMax + '°</div></div>'
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💨 Vind</div><div class="day-detail-stat-value">' + avgWind + ' m/s ' + mainWindDir + '</div></div>'
-    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💧 Nederbörd</div><div class="day-detail-stat-value">' + totalPrecip + ' mm (' + day.precipProb + '%)</div></div>'
+    + '<div class="day-detail-stat"><div class="day-detail-stat-label">💧 Nederbörd</div><div class="day-detail-stat-value">' + precipText + '</div></div>'
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💦 Luftfuktighet</div><div class="day-detail-stat-value">' + avgHumidity + '%</div></div>';
 
-  // Hourly breakdown
+  // Hourly breakdown med ensemble-data
   if (dayHours.length) {
     dayHourly.innerHTML =
         '<div class="day-detail-hourly-title">Timprognos</div>'
       + '<div class="day-detail-hourly-grid">'
-      + dayHours.map(h =>
-          '<div class="day-detail-hour">'
-        + '<div class="day-detail-hour-time">' + fmtTime(h.time) + '</div>'
-        + '<div class="day-detail-hour-icon">' + h.icon + '</div>'
-        + '<div class="day-detail-hour-temp">' + h.temp + '°</div>'
-        + '<div class="day-detail-hour-detail">💨 ' + h.wind + '</div>'
-        + '<div class="day-detail-hour-detail">💧 ' + h.precipMm + 'mm</div>'
-        + '</div>'
-        ).join('')
+      + dayHours.map(h => {
+          const ensKey = h.time.slice(0, 13);
+          const ens = ensHourlyMap.get(ensKey);
+
+          // Använd ensemble för nederbörd om tillgängligt
+          let precipHtml;
+          if (ens?.precip && ens.precip.max > 0) {
+            precipHtml = ens.precip.min + '-' + ens.precip.max + 'mm';
+          } else {
+            precipHtml = h.precipMm + 'mm';
+          }
+
+          return '<div class="day-detail-hour">'
+            + '<div class="day-detail-hour-time">' + fmtTime(h.time) + '</div>'
+            + '<div class="day-detail-hour-icon">' + h.icon + '</div>'
+            + '<div class="day-detail-hour-temp">' + h.temp + '°</div>'
+            + '<div class="day-detail-hour-detail">💨 ' + h.wind + '</div>'
+            + '<div class="day-detail-hour-detail">💧 ' + precipHtml + '</div>'
+            + '</div>';
+        }).join('')
       + '</div>';
   } else {
     dayHourly.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center">Ingen timdata tillgänglig</div>';
