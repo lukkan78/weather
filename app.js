@@ -45,6 +45,8 @@ const airQualitySection = $('airQualitySection');
 const forecastText   = $('forecastText');
 const forecastSummary= $('forecastSummary');
 const searchClear    = $('searchClear');
+const updateBanner   = $('updateBanner');
+const updateBtn      = $('updateBtn');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -1467,9 +1469,46 @@ window.addEventListener('offline', () => {
   loadCache();
 });
 
-// ── Service Worker Registration ────────────────────────────────────────────
+// ── Service Worker Registration + Update Notification ──────────────────────
+let newWorker = null;
+
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.register('./sw.js').then(reg => {
+    // Kolla efter uppdateringar direkt och sedan var 5:e minut
+    reg.update();
+    setInterval(() => reg.update(), 5 * 60 * 1000);
+
+    reg.addEventListener('updatefound', () => {
+      newWorker = reg.installing;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          // Ny version finns tillgänglig
+          if (updateBanner) updateBanner.classList.add('active');
+        }
+      });
+    });
+  }).catch(() => {});
+
+  // Ladda om sidan när ny SW tar över
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
+  });
+}
+
+// Uppdatera-knappen
+if (updateBtn) {
+  updateBtn.addEventListener('click', () => {
+    if (newWorker) {
+      newWorker.postMessage({ type: 'SKIP_WAITING' });
+    }
+  });
+}
+if (updateBanner) {
+  updateBanner.addEventListener('click', e => {
+    if (e.target !== updateBtn && newWorker) {
+      newWorker.postMessage({ type: 'SKIP_WAITING' });
+    }
+  });
 }
 
 // ── Event Listeners ────────────────────────────────────────────────────────
