@@ -1060,13 +1060,16 @@ function calcEnsemble(results) {
     .map(([key, data]) => {
       const p = data.primary;
       const sourceCount = data.temps.length;
+      const precipArr = data.precipMms.filter(v => v != null);
       return {
         time:       p.time,
         temp:       round1(avg(data.temps)),
         icon:       p.icon,
         desc:       p.desc,
         precip:     data.precips.length ? Math.round(avg(data.precips)) : (p.precip ?? 0),
-        precipMm:   data.precipMms.length ? round1(avg(data.precipMms)) : (p.precipMm ?? 0),
+        precipMm:   precipArr.length ? round1(avg(precipArr)) : (p.precipMm ?? 0),
+        precipMin:  precipArr.length ? round1(Math.min(...precipArr)) : 0,  // Min från multi-source
+        precipMax:  precipArr.length ? round1(Math.max(...precipArr)) : 0,  // Max från multi-source
         wind:       data.winds.length ? round1(avg(data.winds)) : (p.wind ?? 0),
         windDir:    p.windDir,
         humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
@@ -1711,16 +1714,36 @@ function showDayDetail(index) {
   const avgHumidity = dayHours.length ? Math.round(dayHours.reduce((s, h) => s + h.humidity, 0) / dayHours.length) : 0;
   const mainWindDir = dayHours.length ? dayHours[Math.floor(dayHours.length / 2)].windDir : '';
 
-  // Använd ensemble för nederbörd om tillgängligt
+  // Kombinera multi-source (YR, SMHI, Open-Meteo) med ICON-EU ensemble
+  // Multi-source: summa av timvärden per källa
+  const msTotal = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
+  const msTotals = dayHours.length
+    ? [round1(dayHours.reduce((s, h) => s + (h.precipMin ?? h.precipMm), 0)),
+       round1(dayHours.reduce((s, h) => s + (h.precipMax ?? h.precipMm), 0))]
+    : [day.precip, day.precip];
+
+  // ICON-EU ensemble: min/max för dagen
+  const iconMin = ensDailyData?.precip?.min ?? null;
+  const iconMax = ensDailyData?.precip?.max ?? null;
+
+  // Kombinera alla värden för totalt intervall
+  const allPrecipValues = [msTotals[0], msTotals[1]];
+  if (iconMin != null) allPrecipValues.push(iconMin);
+  if (iconMax != null) allPrecipValues.push(iconMax);
+
+  const combinedMin = round1(Math.min(...allPrecipValues));
+  const combinedMax = round1(Math.max(...allPrecipValues));
+
   let precipText;
-  if (ensDailyData?.precip && ensDailyData.precip.max > 0) {
-    precipText = ensDailyData.precip.min + '-' + ensDailyData.precip.max + ' mm';
-    if (ensDailyData.precipProb != null) {
-      precipText += ' (' + ensDailyData.precipProb + '%)';
-    }
+  if (combinedMax > 0 && combinedMin !== combinedMax) {
+    precipText = combinedMin + '-' + combinedMax + ' mm';
   } else {
-    const totalPrecip = dayHours.length ? round1(dayHours.reduce((s, h) => s + h.precipMm, 0)) : day.precip;
-    precipText = totalPrecip + ' mm (' + day.precipProb + '%)';
+    precipText = msTotal + ' mm';
+  }
+  if (ensDailyData?.precipProb != null) {
+    precipText += ' (' + ensDailyData.precipProb + '%)';
+  } else if (day.precipProb) {
+    precipText += ' (' + day.precipProb + '%)';
   }
 
   daySummary.innerHTML =
@@ -1729,19 +1752,32 @@ function showDayDetail(index) {
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💧 Nederbörd</div><div class="day-detail-stat-value">' + precipText + '</div></div>'
     + '<div class="day-detail-stat"><div class="day-detail-stat-label">💦 Luftfuktighet</div><div class="day-detail-stat-value">' + avgHumidity + '%</div></div>';
 
-  // Hourly breakdown med ensemble-data
+  // Hourly breakdown med kombinerad ensemble-data
   if (dayHours.length) {
     dayHourly.innerHTML =
-        '<div class="day-detail-hourly-title">Timprognos</div>'
+        '<div class="day-detail-hourly-title">Timprognos (YR + SMHI + Open-Meteo + ICON-EU)</div>'
       + '<div class="day-detail-hourly-grid">'
       + dayHours.map(h => {
           const ensKey = h.time.slice(0, 13);
-          const ens = ensHourlyMap.get(ensKey);
+          const iconEns = ensHourlyMap.get(ensKey);
 
-          // Använd ensemble för nederbörd om tillgängligt
+          // Kombinera multi-source (precipMin/precipMax) med ICON-EU
+          const allValues = [];
+          if (h.precipMin != null) allValues.push(h.precipMin);
+          if (h.precipMax != null) allValues.push(h.precipMax);
+          if (h.precipMm != null) allValues.push(h.precipMm);
+          if (iconEns?.precip?.min != null) allValues.push(iconEns.precip.min);
+          if (iconEns?.precip?.max != null) allValues.push(iconEns.precip.max);
+
           let precipHtml;
-          if (ens?.precip && ens.precip.max > 0) {
-            precipHtml = ens.precip.min + '-' + ens.precip.max + 'mm';
+          if (allValues.length > 0) {
+            const min = round1(Math.min(...allValues));
+            const max = round1(Math.max(...allValues));
+            if (max > 0 && min !== max) {
+              precipHtml = min + '-' + max + 'mm';
+            } else {
+              precipHtml = h.precipMm + 'mm';
+            }
           } else {
             precipHtml = h.precipMm + 'mm';
           }
