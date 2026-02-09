@@ -43,6 +43,7 @@ const currentGust    = $('currentGust');
 const warningsSection= $('warningsSection');
 const airQualitySection = $('airQualitySection');
 const forecastText   = $('forecastText');
+const searchClear    = $('searchClear');
 
 // ── State ──────────────────────────────────────────────────────────────────
 let deferredPrompt   = null;
@@ -1293,7 +1294,24 @@ searchBtn.addEventListener('click', handleSearch);
 geolocateBtn.addEventListener('click', handleGeolocate);
 
 // Autocomplete event listeners
-searchInput.addEventListener('input', e => debouncedFetch(e.target.value.trim()));
+searchInput.addEventListener('input', e => {
+  const val = e.target.value.trim();
+  debouncedFetch(val);
+  // Visa/dölj rensa-knappen
+  if (searchClear) {
+    searchClear.style.display = val.length > 0 ? 'block' : 'none';
+  }
+});
+
+// Rensa sökfältet
+if (searchClear) {
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    searchClear.style.display = 'none';
+    hideSuggestions();
+    searchInput.focus();
+  });
+}
 
 searchInput.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown') {
