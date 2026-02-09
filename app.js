@@ -1089,14 +1089,14 @@ function renderAirQuality(aq, pollen) {
   if (aq) {
     const barWidth = Math.min(aq.aqi, 100);
 
-    // Ensemble info (Copernicus CAMS)
+    // Ensemble info (Copernicus CAMS) - kompakt en rad
     const ensembleInfo = aq.sourceCount > 1
       ? '<div class="aqi-ensemble">' +
-        '<span class="ensemble-badge">🛰️ Copernicus CAMS Ensemble</span>' +
+        '<span class="ensemble-badge">Copernicus CAMS Ensemble</span>' +
         '<span class="ensemble-sources">' + aq.sources.join(' + ') + '</span>' +
-        (aq.spread > 0 ? '<span class="ensemble-spread">±' + aq.spread + ' AQI</span>' : '') +
+        (aq.spread > 0 ? '<span class="ensemble-spread">±' + aq.spread + '</span>' : '') +
         '</div>'
-      : '<div class="aqi-ensemble"><span class="ensemble-badge">🛰️ ' + (aq.sources?.[0] || 'CAMS') + '</span></div>';
+      : '<div class="aqi-ensemble"><span class="ensemble-badge">' + (aq.sources?.[0] || 'CAMS') + '</span></div>';
 
     html += ensembleInfo +
       '<div class="aqi-main">' +
