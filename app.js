@@ -885,7 +885,7 @@ function renderCurrent(ens) {
   }
 
   // Vind med byvind
-  const gustText = ens.current.windGust > ens.current.wind + 2
+  const gustText = ens.current.windGust > ens.current.wind
     ? ' (' + ens.current.windGust + ')'
     : '';
   currentWind.textContent   = ens.current.wind + ' m/s' + gustText + ' ' + (ens.current.windDir || '');
