@@ -1012,50 +1012,61 @@ async function fetchOceanForecast(lat, lon) {
 // ── API: SMHI Radar (animerade radarbilder) ─────────────────────────────────
 async function fetchSMHIRadar() {
   try {
-    // Hämta info om tillgängliga radarbilder
-    const infoRes = await fetch(
-      'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp'
-    );
+    // Hämta info om tillgängliga radarbilder för idag
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(now.getUTCDate()).padStart(2, '0');
 
-    if (!infoRes.ok) {
-      console.log('SMHI Radar API returned:', infoRes.status);
-      // Fallback: skapa frames baserat på aktuell tid (senaste 60 min, var 5:e minut)
-      return createRadarFallback();
+    // Först: hämta dagens radar-filer
+    const dayUrl = 'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp/' +
+      year + '/' + month + '/' + day;
+
+    const res = await fetch(dayUrl);
+    if (!res.ok) {
+      console.log('SMHI Radar day API returned:', res.status);
+      return null;
     }
 
-    const info = await infoRes.json();
+    const data = await res.json();
+    const files = data.files || [];
 
-    // API:et returnerar lastFiles (senaste bilderna)
-    const lastFiles = info.lastFiles || info.files || [];
-    if (!lastFiles.length) {
-      console.log('SMHI Radar: No files in response', info);
-      return createRadarFallback();
+    if (!files.length) {
+      console.log('SMHI Radar: No files for today');
+      return null;
     }
 
-    // Filtrera PNG-filer och sortera (nyast först), ta senaste 12 (60 min)
-    const pngFiles = lastFiles
-      .filter(f => f.key?.endsWith('.png') || f.format === 'png')
-      .sort((a, b) => new Date(b.valid || b.date) - new Date(a.valid || a.date))
-      .slice(0, 12);
+    // Filtrera PNG-filer och sortera efter tid (nyast först)
+    const pngFiles = files
+      .filter(f => f.formats?.some(fmt => fmt.key === 'png'))
+      .sort((a, b) => new Date(b.valid) - new Date(a.valid))
+      .slice(0, 12);  // Senaste 12 bilder (60 min)
 
     if (!pngFiles.length) {
       console.log('SMHI Radar: No PNG files found');
-      return createRadarFallback();
+      return null;
     }
 
-    // Bygg fram URL:er för bilderna
+    // Bygg URL:er för PNG-bilderna
     const baseUrl = 'https://opendata-download-radar.smhi.se';
-    const frames = pngFiles.map(f => ({
-      time: f.valid || f.date,
-      url: f.link?.startsWith('http') ? f.link : baseUrl + f.link,
-      formats: f.formats
-    })).reverse(); // Äldst först för animation
+    const frames = pngFiles.map(f => {
+      const pngFormat = f.formats.find(fmt => fmt.key === 'png');
+      return {
+        time: f.valid,
+        url: pngFormat ? baseUrl + pngFormat.link : null,
+        key: f.key
+      };
+    }).filter(f => f.url).reverse();  // Äldst först för animation
+
+    if (!frames.length) {
+      return null;
+    }
 
     return {
       source: 'SMHI Radar',
-      updated: info.updated,
+      updated: data.updated || now.toISOString(),
       bounds: {
-        // SWEREF99TM bounds för Sverige (ungefärlig WGS84 konvertering)
+        // SWEREF99TM bounds för Sverige (ungefärlig WGS84)
         north: 69.1,
         south: 55.0,
         west: 10.5,
@@ -1065,27 +1076,10 @@ async function fetchSMHIRadar() {
     };
   } catch (err) {
     console.log('SMHI Radar error:', err);
-    return createRadarFallback();
+    return null;
   }
 }
 
-// Fallback om API:et inte fungerar - visa enkel radar-länk
-function createRadarFallback() {
-  const now = new Date();
-  return {
-    source: 'SMHI Radar',
-    updated: now.toISOString(),
-    bounds: {
-      north: 69.1,
-      south: 55.0,
-      west: 10.5,
-      east: 24.2
-    },
-    frames: [],  // Tom - vi visar iframe istället
-    fallback: true,
-    embedUrl: 'https://opendata-download-radar.smhi.se/explore/'
-  };
-}
 
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
 function calcFeelsLike(temp, wind, humidity) {
@@ -2176,62 +2170,31 @@ function renderNowcast(yrNowcast, omMinutely) {
   }
 }
 
-// ── Render Radar-sektion med animerad karta ─────────────────────────────────
-let radarMap = null;
-let radarOverlay = null;
+// ── Render Radar-sektion med animerade bilder ───────────────────────────────
 let radarAnimationTimer = null;
 let radarFrameIndex = 0;
+let radarFrames = [];
 
 function renderRadar(radarData, lat, lon) {
   const radarSection = document.getElementById('radarSection');
   if (!radarSection) return;
 
-  // Visa alltid radarsektionen om vi har data (även fallback)
-  if (!radarData) {
+  // Rensa eventuell pågående animation
+  if (radarAnimationTimer) {
+    clearInterval(radarAnimationTimer);
+    radarAnimationTimer = null;
+  }
+
+  if (!radarData?.frames?.length) {
     radarSection.style.display = 'none';
     return;
   }
 
   radarSection.style.display = 'block';
+  radarFrames = radarData.frames;
+  radarFrameIndex = radarFrames.length - 1;  // Börja med senaste
 
-  // Fallback-läge: visa iframe till SMHI radar
-  if (radarData.fallback || !radarData.frames?.length) {
-    const now = new Date();
-    const fmtTime = now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
-
-    let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
-      '📡 Radar · ' + fmtTime +
-      ' <span class="toggle-icon">▼</span></h3>';
-
-    html += '<div class="radar-content">';
-    html += '<div class="radar-embed-container">';
-    html += '<iframe src="https://opendata-download-radar.smhi.se/explore/" ' +
-      'class="radar-iframe" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>';
-    html += '</div>';
-    html += '<div class="radar-links">';
-    html += '<a href="https://opendata-download-radar.smhi.se/explore/" target="_blank" class="radar-link">' +
-      '📡 SMHI Open Data Radar</a>';
-    html += '<a href="https://www.smhi.se/vader/radar-och-satellit/radar-blixt" target="_blank" class="radar-link">' +
-      '🌩️ Radar & Blixt</a>';
-    html += '<a href="https://regnradar.se/" target="_blank" class="radar-link">' +
-      '🌧️ Regnradar.se</a>';
-    html += '</div>';
-    html += '</div>';
-
-    radarSection.innerHTML = html;
-
-    // Toggle-lyssnare
-    const toggle = document.getElementById('radarToggle');
-    if (toggle) {
-      toggle.addEventListener('click', () => {
-        radarSection.classList.toggle('open');
-      });
-    }
-    return;
-  }
-
-  const frames = radarData.frames;
-  const latestTime = new Date(frames[frames.length - 1].time);
+  const latestTime = new Date(radarFrames[radarFrames.length - 1].time);
   const fmtRadarTime = latestTime.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 
   let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
@@ -2240,163 +2203,120 @@ function renderRadar(radarData, lat, lon) {
 
   html += '<div class="radar-content">';
 
-  // Karta-container
-  html += '<div id="radarMapContainer" class="radar-map-container"></div>';
+  // Radar bild-container
+  html += '<div class="radar-image-container">';
+  html += '<img id="radarImage" class="radar-image" src="' + radarFrames[radarFrameIndex].url + '" alt="Väderradar Sverige">';
+  html += '<div class="radar-time-display" id="radarTimeDisplay">' + fmtRadarTime + '</div>';
+  html += '</div>';
 
   // Animationskontroller
   html += '<div class="radar-controls">';
   html += '<button id="radarPlayBtn" class="radar-btn">▶ Spela</button>';
   html += '<div class="radar-timeline">';
-  html += '<input type="range" id="radarSlider" min="0" max="' + (frames.length - 1) + '" value="' + (frames.length - 1) + '">';
+  html += '<input type="range" id="radarSlider" min="0" max="' + (radarFrames.length - 1) + '" value="' + radarFrameIndex + '">';
   html += '<div class="radar-time-labels">';
 
-  // Tidsetiketter (visa var 3:e)
-  frames.forEach((f, i) => {
-    if (i % 3 === 0 || i === frames.length - 1) {
-      const t = new Date(f.time);
-      const pct = (i / (frames.length - 1)) * 100;
-      html += '<span style="left:' + pct + '%">' + t.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }) + '</span>';
-    }
-  });
+  // Tidsetiketter
+  const labelCount = Math.min(5, radarFrames.length);
+  for (let i = 0; i < labelCount; i++) {
+    const idx = Math.floor(i * (radarFrames.length - 1) / (labelCount - 1));
+    const t = new Date(radarFrames[idx].time);
+    const pct = (idx / (radarFrames.length - 1)) * 100;
+    html += '<span style="left:' + pct + '%">' + t.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }) + '</span>';
+  }
 
-  html += '</div>';
-  html += '</div>';
-  html += '</div>';
+  html += '</div></div></div>';
 
   // Legend
   html += '<div class="radar-legend">';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#a0d0ff"></span>Lätt</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#3090ff"></span>Måttlig</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#f0f000"></span>Kraftig</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ff6000"></span>Mycket kraftig</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#d000d0"></span>Extrem</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#96d2fa"></span>Lätt</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#0064ff"></span>Måttlig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ffff00"></span>Kraftig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ff0000"></span>Stark</span>';
   html += '</div>';
 
   // Info
   html += '<div class="radar-info">';
-  html += '<span class="ensemble-badge">SMHI</span> Radarkomposit · ' + frames.length + ' bilder · 60 min';
+  html += '<span class="ensemble-badge">SMHI</span> Radarkomposit · ' + radarFrames.length + ' bilder · ' + (radarFrames.length * 5) + ' min';
   html += '</div>';
 
   html += '</div>';
 
   radarSection.innerHTML = html;
 
-  // Initiera karta (Leaflet)
-  setTimeout(() => initRadarMap(frames, lat, lon, radarData.bounds), 100);
+  // Initiera animation
+  initRadarAnimation();
 
   // Toggle-lyssnare
   const toggle = document.getElementById('radarToggle');
   if (toggle) {
     toggle.addEventListener('click', () => {
       radarSection.classList.toggle('open');
-      // Uppdatera kartstorlek när sektionen öppnas
-      if (radarSection.classList.contains('open') && radarMap) {
-        setTimeout(() => radarMap.invalidateSize(), 300);
-      }
     });
   }
 }
 
-function initRadarMap(frames, lat, lon, bounds) {
-  const container = document.getElementById('radarMapContainer');
-  if (!container) return;
-
-  // Kolla om Leaflet är laddat
-  if (typeof L === 'undefined') {
-    console.warn('Leaflet not loaded, skipping radar map');
-    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Kartan kunde inte laddas</div>';
-    return;
-  }
-
-  // Rensa gammal karta
-  if (radarMap) {
-    radarMap.remove();
-    radarMap = null;
-  }
-
-  // Skapa karta
-  radarMap = L.map('radarMapContainer', {
-    center: [lat, lon],
-    zoom: 7,
-    zoomControl: true,
-    attributionControl: false
-  });
-
-  // Lägg till bakgrundskarta (OpenStreetMap)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 10,
-    opacity: 0.8
-  }).addTo(radarMap);
-
-  // Lägg till radaroverlay
-  const imageBounds = [[bounds.south, bounds.west], [bounds.north, bounds.east]];
-  radarOverlay = L.imageOverlay(frames[frames.length - 1].url, imageBounds, {
-    opacity: 0.7,
-    crossOrigin: true
-  }).addTo(radarMap);
-
-  // Lägg till positionsmarkör
-  L.marker([lat, lon], {
-    icon: L.divIcon({
-      className: 'radar-position-marker',
-      html: '📍',
-      iconSize: [24, 24],
-      iconAnchor: [12, 24]
-    })
-  }).addTo(radarMap);
-
-  // Animationskontroller
+// Initiera radar-animation
+function initRadarAnimation() {
   const playBtn = document.getElementById('radarPlayBtn');
   const slider = document.getElementById('radarSlider');
+  const img = document.getElementById('radarImage');
+  const timeDisplay = document.getElementById('radarTimeDisplay');
+
+  if (!playBtn || !slider || !img) return;
+
   let isPlaying = false;
-  radarFrameIndex = frames.length - 1;
 
-  if (playBtn) {
-    playBtn.addEventListener('click', () => {
-      isPlaying = !isPlaying;
-      playBtn.textContent = isPlaying ? '⏸ Pausa' : '▶ Spela';
+  // Förladda alla bilder
+  radarFrames.forEach(f => {
+    const preload = new Image();
+    preload.src = f.url;
+  });
 
-      if (isPlaying) {
-        // Starta animation från början om vi är på sista
-        if (radarFrameIndex >= frames.length - 1) {
-          radarFrameIndex = 0;
+  function updateFrame(index) {
+    if (!radarFrames[index]) return;
+    radarFrameIndex = index;
+    img.src = radarFrames[index].url;
+    slider.value = index;
+    if (timeDisplay) {
+      const t = new Date(radarFrames[index].time);
+      timeDisplay.textContent = t.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+
+  playBtn.addEventListener('click', () => {
+    isPlaying = !isPlaying;
+    playBtn.textContent = isPlaying ? '⏸ Pausa' : '▶ Spela';
+
+    if (isPlaying) {
+      // Starta från början om vi är på slutet
+      if (radarFrameIndex >= radarFrames.length - 1) {
+        radarFrameIndex = 0;
+        updateFrame(0);
+      }
+      radarAnimationTimer = setInterval(() => {
+        radarFrameIndex++;
+        if (radarFrameIndex >= radarFrames.length) {
+          radarFrameIndex = radarFrames.length - 1;
+          isPlaying = false;
+          playBtn.textContent = '▶ Spela';
+          clearInterval(radarAnimationTimer);
         }
-        radarAnimationTimer = setInterval(() => {
-          radarFrameIndex = (radarFrameIndex + 1) % frames.length;
-          updateRadarFrame(frames, radarFrameIndex);
-          if (slider) slider.value = radarFrameIndex;
+        updateFrame(radarFrameIndex);
+      }, 500);
+    } else {
+      clearInterval(radarAnimationTimer);
+    }
+  });
 
-          // Pausa på sista bilden
-          if (radarFrameIndex === frames.length - 1) {
-            isPlaying = false;
-            playBtn.textContent = '▶ Spela';
-            clearInterval(radarAnimationTimer);
-          }
-        }, 400);
-      } else {
-        clearInterval(radarAnimationTimer);
-      }
-    });
-  }
-
-  if (slider) {
-    slider.addEventListener('input', (e) => {
-      radarFrameIndex = parseInt(e.target.value);
-      updateRadarFrame(frames, radarFrameIndex);
-      // Stoppa animation om användaren drar i slider
-      if (isPlaying) {
-        isPlaying = false;
-        playBtn.textContent = '▶ Spela';
-        clearInterval(radarAnimationTimer);
-      }
-    });
-  }
-}
-
-function updateRadarFrame(frames, index) {
-  if (radarOverlay && frames[index]) {
-    radarOverlay.setUrl(frames[index].url);
-  }
+  slider.addEventListener('input', (e) => {
+    if (isPlaying) {
+      isPlaying = false;
+      playBtn.textContent = '▶ Spela';
+      clearInterval(radarAnimationTimer);
+    }
+    updateFrame(parseInt(e.target.value));
+  });
 }
 
 // ── Render Prognos-text ─────────────────────────────────────────────────────
