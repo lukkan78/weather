@@ -1514,7 +1514,7 @@ function renderAirQuality(aq, pollen) {
   airQualitySection.style.display = 'block';
 
   // Collapsible header med AQI-värde i färg (samma stil som Datakällor)
-  const aqiPreview = aq ? ' — <span style="color:' + aq.color + '">AQI ' + aq.aqi + '</span>' : '';
+  const aqiPreview = aq ? ' · <span style="color:' + aq.color + '">AQI ' + aq.aqi + '</span>' : '';
   let html = '<h3 class="section-title section-toggle" id="airQualityToggle">Luftkvalitet' + aqiPreview + ' <span class="toggle-icon">▼</span></h3>';
   html += '<div class="air-quality-content">';
 
@@ -1597,7 +1597,7 @@ function renderUV(hourly) {
 
   // Bygg HTML
   let html = '<h3 class="section-title section-toggle" id="uvToggle">' +
-    'UV-index — <span style="color:' + uvInfo.color + '">UV ' + currentUVVal + ' (' + uvInfo.level + ')</span>' +
+    'UV-index · <span style="color:' + uvInfo.color + '">' + currentUVVal + ' ' + uvInfo.level + '</span>' +
     ' <span class="toggle-icon">▼</span></h3>';
 
   html += '<div class="uv-content">';
@@ -1873,11 +1873,11 @@ function renderNowcast(yrNowcast, omMinutely) {
     return h + ':' + m;
   };
 
-  // Skapa titeln
-  let titleText = 'Nederbörd kommande 6h';
+  // Skapa titeln (kort för mobil)
+  let titleText = 'Nederbörd 6h';
   let titleIcon = '🌧️';
   if (isDryNow && totalPrecip < 0.5) {
-    titleText = 'Uppehåll kommande timmar';
+    titleText = 'Uppehåll 6h';
     titleIcon = '☀️';
   } else if (totalPrecip > 5) {
     titleIcon = '⛈️';
