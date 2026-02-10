@@ -1016,17 +1016,20 @@ async function fetchSMHIRadar() {
     const infoRes = await fetch(
       'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp'
     );
+
     if (!infoRes.ok) {
       console.log('SMHI Radar API returned:', infoRes.status);
-      return null;
+      // Fallback: skapa frames baserat på aktuell tid (senaste 60 min, var 5:e minut)
+      return createRadarFallback();
     }
+
     const info = await infoRes.json();
 
     // API:et returnerar lastFiles (senaste bilderna)
     const lastFiles = info.lastFiles || info.files || [];
     if (!lastFiles.length) {
       console.log('SMHI Radar: No files in response', info);
-      return null;
+      return createRadarFallback();
     }
 
     // Filtrera PNG-filer och sortera (nyast först), ta senaste 12 (60 min)
@@ -1037,7 +1040,7 @@ async function fetchSMHIRadar() {
 
     if (!pngFiles.length) {
       console.log('SMHI Radar: No PNG files found');
-      return null;
+      return createRadarFallback();
     }
 
     // Bygg fram URL:er för bilderna
@@ -1060,9 +1063,28 @@ async function fetchSMHIRadar() {
       },
       frames
     };
-  } catch {
-    return null;
+  } catch (err) {
+    console.log('SMHI Radar error:', err);
+    return createRadarFallback();
   }
+}
+
+// Fallback om API:et inte fungerar - visa enkel radar-länk
+function createRadarFallback() {
+  const now = new Date();
+  return {
+    source: 'SMHI Radar',
+    updated: now.toISOString(),
+    bounds: {
+      north: 69.1,
+      south: 55.0,
+      west: 10.5,
+      east: 24.2
+    },
+    frames: [],  // Tom - vi visar iframe istället
+    fallback: true,
+    embedUrl: 'https://www.smhi.se/vader/kartor/radar-blixt/q/Sverige/1'
+  };
 }
 
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
@@ -2164,12 +2186,45 @@ function renderRadar(radarData, lat, lon) {
   const radarSection = document.getElementById('radarSection');
   if (!radarSection) return;
 
-  if (!radarData?.frames?.length) {
+  // Visa alltid radarsektionen om vi har data (även fallback)
+  if (!radarData) {
     radarSection.style.display = 'none';
     return;
   }
 
   radarSection.style.display = 'block';
+
+  // Fallback-läge: visa iframe till SMHI radar
+  if (radarData.fallback || !radarData.frames?.length) {
+    const now = new Date();
+    const fmtTime = now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+
+    let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
+      '📡 Radar · ' + fmtTime +
+      ' <span class="toggle-icon">▼</span></h3>';
+
+    html += '<div class="radar-content">';
+    html += '<div class="radar-embed-container">';
+    html += '<iframe src="https://www.smhi.se/vadret/kartor/nederbordsradar/q/Sverige" ' +
+      'class="radar-iframe" frameborder="0" loading="lazy"></iframe>';
+    html += '</div>';
+    html += '<div class="radar-info">';
+    html += '<a href="https://www.smhi.se/vader/kartor/radar-blixt" target="_blank" class="radar-link">' +
+      '🔗 Öppna SMHI Radar i nytt fönster</a>';
+    html += '</div>';
+    html += '</div>';
+
+    radarSection.innerHTML = html;
+
+    // Toggle-lyssnare
+    const toggle = document.getElementById('radarToggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        radarSection.classList.toggle('open');
+      });
+    }
+    return;
+  }
 
   const frames = radarData.frames;
   const latestTime = new Date(frames[frames.length - 1].time);
