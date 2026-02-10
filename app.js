@@ -949,6 +949,121 @@ async function fetchOpenMeteoMinutely(lat, lon) {
   }
 }
 
+// ── API: MET Oceanforecast (havsvind för kustnära platser) ──────────────────
+async function fetchOceanForecast(lat, lon) {
+  try {
+    // Testa havspunkt ~5km ut från kusten (rakt västerut för svenska västkusten)
+    // För östkusten skulle vi behöva en smartare lösning
+    const oceanPoints = [
+      { lat: lat, lon: lon - 0.05 },      // ~4km väster
+      { lat: lat, lon: lon + 0.05 },      // ~4km öster
+      { lat: lat - 0.02, lon: lon },      // ~2km söder
+    ];
+
+    for (const pt of oceanPoints) {
+      try {
+        const res = await fetch(
+          'https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=' + pt.lat.toFixed(4) + '&lon=' + pt.lon.toFixed(4)
+        );
+        if (!res.ok) continue;
+        const data = await res.json();
+
+        const ts = data.properties?.timeseries;
+        if (!ts?.length) continue;
+
+        // Beräkna distans till havspunkten (ungefärligt)
+        const distKm = Math.sqrt(
+          Math.pow((pt.lat - lat) * 111, 2) +
+          Math.pow((pt.lon - lon) * 111 * Math.cos(lat * Math.PI / 180), 2)
+        );
+
+        return {
+          source: 'MET Ocean',
+          oceanPoint: pt,
+          distanceKm: Math.round(distKm * 10) / 10,
+          updated: data.properties?.meta?.updated_at,
+          current: {
+            windSpeed: ts[0]?.data?.instant?.details?.wind_from_direction != null ? {
+              speed: ts[0].data.instant.details.wind_speed,
+              direction: ts[0].data.instant.details.wind_from_direction,
+              dirText: getWindDirection(ts[0].data.instant.details.wind_from_direction)
+            } : null,
+            waveHeight: ts[0]?.data?.instant?.details?.sea_surface_wave_height ?? null,
+            waterTemp: ts[0]?.data?.instant?.details?.sea_water_temperature ?? null,
+          },
+          hourly: ts.slice(0, 48).map(e => ({
+            time: e.time,
+            windSpeed: e.data?.instant?.details?.wind_speed ?? null,
+            windDir: e.data?.instant?.details?.wind_from_direction ?? null,
+            waveHeight: e.data?.instant?.details?.sea_surface_wave_height ?? null,
+            waterTemp: e.data?.instant?.details?.sea_water_temperature ?? null,
+          }))
+        };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── API: SMHI Radar (animerade radarbilder) ─────────────────────────────────
+async function fetchSMHIRadar() {
+  try {
+    // Hämta info om tillgängliga radarbilder
+    const infoRes = await fetch(
+      'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp'
+    );
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+
+    // Hämta senaste datumet
+    const lastFiles = info.files || [];
+    if (!lastFiles.length) return null;
+
+    // Sortera efter tid (nyast först) och ta de senaste 12 (60 min, 5 min intervall)
+    const pngFiles = lastFiles
+      .filter(f => f.key?.endsWith('.png'))
+      .sort((a, b) => new Date(b.valid) - new Date(a.valid))
+      .slice(0, 12);
+
+    if (!pngFiles.length) return null;
+
+    // Bygg fram URL:er för bilderna
+    const baseUrl = 'https://opendata-download-radar.smhi.se';
+    const frames = pngFiles.map(f => ({
+      time: f.valid,
+      url: baseUrl + f.link,
+      formats: f.formats
+    })).reverse(); // Äldst först för animation
+
+    return {
+      source: 'SMHI Radar',
+      updated: info.updated,
+      bounds: {
+        // SWEREF99TM bounds för Sverige (ungefärlig WGS84 konvertering)
+        north: 69.1,
+        south: 55.0,
+        west: 10.5,
+        east: 24.2
+      },
+      frames
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Vindriktning till text ──────────────────────────────────────────────────
+function getWindDirection(degrees) {
+  if (degrees == null) return '';
+  const dirs = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSV', 'SV', 'VSV', 'V', 'VNV', 'NV', 'NNV'];
+  const index = Math.round(degrees / 22.5) % 16;
+  return dirs[index];
+}
+
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
 function calcFeelsLike(temp, wind, humidity) {
   // Wind Chill (när det är kallt och blåsigt)
@@ -1390,7 +1505,7 @@ function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
   };
 }
 
-function renderCurrent(ens, iconEuEns, nowcastRisk) {
+function renderCurrent(ens, iconEuEns, nowcastRisk, oceanForecast) {
   currentIcon.textContent   = ens.current.icon;
   currentTemp.textContent   = ens.current.temp;
   currentDesc.textContent   = ens.current.desc;
@@ -1413,6 +1528,27 @@ function renderCurrent(ens, iconEuEns, nowcastRisk) {
     riskEl.style.display = 'none';
   }
 
+  // Havsvind-indikator för kustnära platser
+  let oceanWindEl = document.getElementById('oceanWindIndicator');
+  if (!oceanWindEl) {
+    oceanWindEl = document.createElement('div');
+    oceanWindEl.id = 'oceanWindIndicator';
+    oceanWindEl.className = 'ocean-wind-indicator';
+    // Lägg till efter risk-indikatorn eller efter desc
+    const insertAfter = riskEl || currentDesc;
+    insertAfter.parentElement.insertBefore(oceanWindEl, insertAfter.nextSibling);
+  }
+
+  if (oceanForecast?.current?.windSpeed) {
+    const ow = oceanForecast.current.windSpeed;
+    oceanWindEl.innerHTML = '<span class="ocean-icon">🌊</span>' +
+      '<span class="ocean-text">Havsvind ' + Math.round(ow.speed) + ' m/s ' + ow.dirText + '</span>' +
+      '<span class="ocean-dist">(' + oceanForecast.distanceKm + ' km)</span>';
+    oceanWindEl.style.display = 'flex';
+  } else {
+    oceanWindEl.style.display = 'none';
+  }
+
   // Känns som (visa bara om skillnad > 1 grad)
   const feelsDiff = Math.abs(ens.current.feelsLike - ens.current.temp);
   if (currentFeels) {
@@ -1424,18 +1560,38 @@ function renderCurrent(ens, iconEuEns, nowcastRisk) {
     }
   }
 
-  // Vind med byvind - använd ICON-EU ensemble om tillgängligt
-  let windText = ens.current.wind + ' m/s';
+  // Vind med byvind - använd ICON-EU ensemble + havsvind om tillgängligt
+  let windValues = [ens.current.wind];
+  let windDir = ens.current.windDir || '';
+
+  // Lägg till ICON-EU ensemble
   if (iconEuEns?.current?.wind) {
     const w = iconEuEns.current.wind;
-    if (w.min !== w.max) {
-      windText = w.min + '-' + w.max + ' m/s';
-    }
+    windValues.push(w.min, w.max);
   }
-  const gustText = ens.current.windGust > ens.current.wind
+
+  // Lägg till havsvind för kustnära platser (viktat lägre)
+  if (oceanForecast?.current?.windSpeed) {
+    const oceanWind = oceanForecast.current.windSpeed.speed;
+    // Havsvind påverkar ensemble men viktas baserat på avstånd
+    const weight = Math.max(0.3, 1 - (oceanForecast.distanceKm / 15));
+    const blendedOcean = ens.current.wind * (1 - weight) + oceanWind * weight;
+    windValues.push(Math.round(blendedOcean));
+  }
+
+  const minWind = Math.min(...windValues);
+  const maxWind = Math.max(...windValues);
+  let windText = minWind !== maxWind ? minWind + '-' + maxWind + ' m/s' : minWind + ' m/s';
+
+  // Lägg till havsvind-ikon om det påverkar
+  if (oceanForecast?.current?.windSpeed && oceanForecast.distanceKm < 10) {
+    windText += ' 🌊';
+  }
+
+  const gustText = ens.current.windGust > maxWind
     ? ' (' + ens.current.windGust + ')'
     : '';
-  currentWind.textContent = windText + gustText + ' ' + (ens.current.windDir || '');
+  currentWind.textContent = windText + gustText + ' ' + windDir;
 
   currentHumid.textContent  = ens.current.humidity + ' %';
 
@@ -1997,6 +2153,185 @@ function renderNowcast(yrNowcast, omMinutely) {
   }
 }
 
+// ── Render Radar-sektion med animerad karta ─────────────────────────────────
+let radarMap = null;
+let radarOverlay = null;
+let radarAnimationTimer = null;
+let radarFrameIndex = 0;
+
+function renderRadar(radarData, lat, lon) {
+  const radarSection = document.getElementById('radarSection');
+  if (!radarSection) return;
+
+  if (!radarData?.frames?.length) {
+    radarSection.style.display = 'none';
+    return;
+  }
+
+  radarSection.style.display = 'block';
+
+  const frames = radarData.frames;
+  const latestTime = new Date(frames[frames.length - 1].time);
+  const fmtRadarTime = latestTime.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+
+  let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
+    '📡 Radar · ' + fmtRadarTime +
+    ' <span class="toggle-icon">▼</span></h3>';
+
+  html += '<div class="radar-content">';
+
+  // Karta-container
+  html += '<div id="radarMapContainer" class="radar-map-container"></div>';
+
+  // Animationskontroller
+  html += '<div class="radar-controls">';
+  html += '<button id="radarPlayBtn" class="radar-btn">▶ Spela</button>';
+  html += '<div class="radar-timeline">';
+  html += '<input type="range" id="radarSlider" min="0" max="' + (frames.length - 1) + '" value="' + (frames.length - 1) + '">';
+  html += '<div class="radar-time-labels">';
+
+  // Tidsetiketter (visa var 3:e)
+  frames.forEach((f, i) => {
+    if (i % 3 === 0 || i === frames.length - 1) {
+      const t = new Date(f.time);
+      const pct = (i / (frames.length - 1)) * 100;
+      html += '<span style="left:' + pct + '%">' + t.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }) + '</span>';
+    }
+  });
+
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // Legend
+  html += '<div class="radar-legend">';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#a0d0ff"></span>Lätt</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#3090ff"></span>Måttlig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#f0f000"></span>Kraftig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ff6000"></span>Mycket kraftig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#d000d0"></span>Extrem</span>';
+  html += '</div>';
+
+  // Info
+  html += '<div class="radar-info">';
+  html += '<span class="ensemble-badge">SMHI</span> Radarkomposit · ' + frames.length + ' bilder · 60 min';
+  html += '</div>';
+
+  html += '</div>';
+
+  radarSection.innerHTML = html;
+
+  // Initiera karta (Leaflet)
+  setTimeout(() => initRadarMap(frames, lat, lon, radarData.bounds), 100);
+
+  // Toggle-lyssnare
+  const toggle = document.getElementById('radarToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      radarSection.classList.toggle('open');
+      // Uppdatera kartstorlek när sektionen öppnas
+      if (radarSection.classList.contains('open') && radarMap) {
+        setTimeout(() => radarMap.invalidateSize(), 300);
+      }
+    });
+  }
+}
+
+function initRadarMap(frames, lat, lon, bounds) {
+  const container = document.getElementById('radarMapContainer');
+  if (!container) return;
+
+  // Rensa gammal karta
+  if (radarMap) {
+    radarMap.remove();
+    radarMap = null;
+  }
+
+  // Skapa karta
+  radarMap = L.map('radarMapContainer', {
+    center: [lat, lon],
+    zoom: 7,
+    zoomControl: true,
+    attributionControl: false
+  });
+
+  // Lägg till bakgrundskarta (OpenStreetMap)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 10,
+    opacity: 0.8
+  }).addTo(radarMap);
+
+  // Lägg till radaroverlay
+  const imageBounds = [[bounds.south, bounds.west], [bounds.north, bounds.east]];
+  radarOverlay = L.imageOverlay(frames[frames.length - 1].url, imageBounds, {
+    opacity: 0.7,
+    crossOrigin: true
+  }).addTo(radarMap);
+
+  // Lägg till positionsmarkör
+  L.marker([lat, lon], {
+    icon: L.divIcon({
+      className: 'radar-position-marker',
+      html: '📍',
+      iconSize: [24, 24],
+      iconAnchor: [12, 24]
+    })
+  }).addTo(radarMap);
+
+  // Animationskontroller
+  const playBtn = document.getElementById('radarPlayBtn');
+  const slider = document.getElementById('radarSlider');
+  let isPlaying = false;
+  radarFrameIndex = frames.length - 1;
+
+  if (playBtn) {
+    playBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playBtn.textContent = isPlaying ? '⏸ Pausa' : '▶ Spela';
+
+      if (isPlaying) {
+        // Starta animation från början om vi är på sista
+        if (radarFrameIndex >= frames.length - 1) {
+          radarFrameIndex = 0;
+        }
+        radarAnimationTimer = setInterval(() => {
+          radarFrameIndex = (radarFrameIndex + 1) % frames.length;
+          updateRadarFrame(frames, radarFrameIndex);
+          if (slider) slider.value = radarFrameIndex;
+
+          // Pausa på sista bilden
+          if (radarFrameIndex === frames.length - 1) {
+            isPlaying = false;
+            playBtn.textContent = '▶ Spela';
+            clearInterval(radarAnimationTimer);
+          }
+        }, 400);
+      } else {
+        clearInterval(radarAnimationTimer);
+      }
+    });
+  }
+
+  if (slider) {
+    slider.addEventListener('input', (e) => {
+      radarFrameIndex = parseInt(e.target.value);
+      updateRadarFrame(frames, radarFrameIndex);
+      // Stoppa animation om användaren drar i slider
+      if (isPlaying) {
+        isPlaying = false;
+        playBtn.textContent = '▶ Spela';
+        clearInterval(radarAnimationTimer);
+      }
+    });
+  }
+}
+
+function updateRadarFrame(frames, index) {
+  if (radarOverlay && frames[index]) {
+    radarOverlay.setUrl(frames[index].url);
+  }
+}
+
 // ── Render Prognos-text ─────────────────────────────────────────────────────
 function renderForecastText(text) {
   if (!forecastSummary) return;
@@ -2008,7 +2343,7 @@ function renderForecastText(text) {
   }
 }
 
-function renderSources(results) {
+function renderSources(results, oceanForecast) {
   sourcesGrid.innerHTML = '';
 
   results.forEach(r => {
@@ -2036,15 +2371,43 @@ function renderSources(results) {
 
     sourcesGrid.appendChild(card);
   });
+
+  // Lägg till havsvind som källa om tillgänglig
+  if (oceanForecast?.current?.windSpeed) {
+    const card = document.createElement('div');
+    card.className = 'source-card ocean-source';
+    const ow = oceanForecast.current.windSpeed;
+    card.innerHTML =
+        '<div class="source-name">🌊 MET Ocean</div>'
+      + '<div class="source-icon">🌊</div>'
+      + '<div class="source-temp">' + Math.round(ow.speed) + ' m/s</div>'
+      + '<div class="source-details">'
+      + '<div>💨 Havsvind ' + ow.dirText + '</div>'
+      + (oceanForecast.current.waveHeight != null ? '<div>🌊 Våghöjd ' + oceanForecast.current.waveHeight + ' m</div>' : '')
+      + (oceanForecast.current.waterTemp != null ? '<div>🌡️ Vatten ' + Math.round(oceanForecast.current.waterTemp) + '°C</div>' : '')
+      + '<div>📍 ' + oceanForecast.distanceKm + ' km</div>'
+      + '</div>'
+      + '<span class="source-status status-ok">Kust</span>';
+    sourcesGrid.appendChild(card);
+  }
 }
 
-function renderHourly(hourly, iconEuEns) {
+function renderHourly(hourly, iconEuEns, oceanForecast) {
   hourlyScroll.innerHTML = '';
   cachedHourly = hourly;
   const now   = Date.now();
   const items = hourly
     .filter(h => new Date(h.time).getTime() >= now - 1800000)  // 30 min grace
     .slice(0, 24);
+
+  // Bygg map för havsvind per timme (om kustnära)
+  const oceanWindMap = new Map();
+  if (oceanForecast?.hourly) {
+    oceanForecast.hourly.forEach(o => {
+      const key = o.time.slice(0, 13);  // "2024-01-15T14"
+      oceanWindMap.set(key, o);
+    });
+  }
 
   // Bygg en map för snabb uppslagning av ICON-EU ensemble-data
   const ensMap = new Map();
@@ -2357,7 +2720,7 @@ async function fetchWeather(lat, lon, name) {
 
   try {
     // Hämta väderdata från alla källor parallellt
-    const [weatherSettled, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely] = await Promise.all([
+    const [weatherSettled, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely, oceanForecast, radarData] = await Promise.all([
       Promise.allSettled([
         fetchOpenMeteo(lat, lon),
         fetchYR(lat, lon),
@@ -2369,6 +2732,8 @@ async function fetchWeather(lat, lon, name) {
       fetchIconEuEnsemble(lat, lon),  // ICON-EU ensemble för nederbörd/vind
       fetchYRNowcast(lat, lon),       // Radar-baserad nowcast 0-2h
       fetchOpenMeteoMinutely(lat, lon), // 15-min data 2-6h
+      fetchOceanForecast(lat, lon),   // Havsvind för kustnära platser
+      fetchSMHIRadar(),               // Animerade radarbilder
     ]);
 
     const names   = ['Open-Meteo', 'YR', 'SMHI'];
@@ -2393,9 +2758,9 @@ async function fetchWeather(lat, lon, name) {
     // Analysera nowcast-risk för "just nu"-visning
     const nowcastRisk = analyzeNowcastRisk(yrNowcast, omMinutely, ens.current.temp);
 
-    renderCurrent(ens, iconEuEns, nowcastRisk);
-    renderSources(results);
-    renderHourly(ens.hourly, iconEuEns);
+    renderCurrent(ens, iconEuEns, nowcastRisk, oceanForecast);
+    renderSources(results, oceanForecast);
+    renderHourly(ens.hourly, iconEuEns, oceanForecast);
     renderDaily(ens.daily, iconEuEns);
 
     // Nya funktioner
@@ -2403,6 +2768,7 @@ async function fetchWeather(lat, lon, name) {
     renderAirQuality(airQuality, pollen);
     renderUV(ens.hourly);
     renderNowcast(yrNowcast, omMinutely);
+    renderRadar(radarData, lat, lon);
 
     // Generera och visa beskrivande text
     const forecastTextStr = generateForecastText(ens, ens.daily, warnings);
@@ -2414,7 +2780,7 @@ async function fetchWeather(lat, lon, name) {
     // Persist for offline + recent location
     try {
       localStorage.setItem('väder_cache', JSON.stringify({
-        loc: lastLoc, results, ens, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely, ts: Date.now()
+        loc: lastLoc, results, ens, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely, oceanForecast, radarData, ts: Date.now()
       }));
       // Spara senaste plats separat (för snabbval)
       localStorage.setItem('väder_recent', JSON.stringify(lastLoc));
@@ -2444,14 +2810,15 @@ function loadCache() {
     // Analysera nowcast-risk från cachad data
     const nowcastRisk = analyzeNowcastRisk(c.yrNowcast, c.omMinutely, c.ens?.current?.temp);
 
-    renderCurrent(c.ens, c.iconEuEns, nowcastRisk);
-    renderSources(c.results);
-    renderHourly(c.ens.hourly, c.iconEuEns);
+    renderCurrent(c.ens, c.iconEuEns, nowcastRisk, c.oceanForecast);
+    renderSources(c.results, c.oceanForecast);
+    renderHourly(c.ens.hourly, c.iconEuEns, c.oceanForecast);
     renderDaily(c.ens.daily, c.iconEuEns);
     renderWarnings(c.warnings);
     renderAirQuality(c.airQuality, c.pollen);
     renderUV(c.ens.hourly);
     renderNowcast(c.yrNowcast, c.omMinutely);
+    renderRadar(c.radarData, c.loc.lat, c.loc.lon);
 
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
