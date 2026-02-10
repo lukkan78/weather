@@ -1661,39 +1661,62 @@ function renderDaily(daily, iconEuEns) {
     el.dataset.index = index;
     el.style.cursor = 'pointer';
     const dayLabel = isToday(d.time) ? 'Idag' : fmtDay(d.time);
-    const leftPct  = ((d.tempMin - allMin) / range) * 100;
-    const widthPct = ((d.tempMax - d.tempMin) / range) * 100;
-    const spread   = d.tempMax - d.tempMin;
+
+    // Hämta ICON-EU ensemble-data för dagen (om inom 5-dagars räckvidden)
+    const ens = ensMap.get(d.time);
+
+    // === KOMBINERA TEMPERATUR ===
+    // Multi-source (YR, SMHI, Open-Meteo) tempMin/tempMax
+    const tempValues = [d.tempMin, d.tempMax];
+    // ICON-EU ensemble tempMin/tempMax
+    if (ens?.tempMin?.min != null) tempValues.push(ens.tempMin.min);
+    if (ens?.tempMax?.max != null) tempValues.push(ens.tempMax.max);
+    const combinedTempMin = round1(Math.min(...tempValues));
+    const combinedTempMax = round1(Math.max(...tempValues));
+
+    const leftPct  = ((combinedTempMin - allMin) / range) * 100;
+    const widthPct = ((combinedTempMax - combinedTempMin) / range) * 100;
+    const spread   = combinedTempMax - combinedTempMin;
     const dotColor = spread > 10 ? 'var(--confidence-low)'
                    : spread > 6  ? 'var(--confidence-medium)'
                    :               'var(--confidence-high)';
 
-    // Hämta ensemble-data för dagen (om inom 5-dagars räckvidden)
-    const ens = ensMap.get(d.time);
+    // === KOMBINERA NEDERBÖRD ===
+    // Multi-source värde
+    const msPrecip = d.precip ?? 0;
+    // ICON-EU ensemble min/max
+    const iconPrecipMin = ens?.precip?.min ?? null;
+    const iconPrecipMax = ens?.precip?.max ?? null;
 
-    // Visa nederbördsinfo - använd ensemble om tillgängligt
     let precipHtml;
-    if (ens?.precip && ens.precip.max > 0) {
-      // Visa intervall + sannolikhet från ensemble
-      precipHtml = ens.precip.min + '-' + ens.precip.max + ' mm';
-      if (ens.precipProb != null && ens.precipProb < 100) {
+    if (iconPrecipMin != null && iconPrecipMax != null) {
+      // Kombinera multi-source med ICON-EU
+      const allPrecip = [msPrecip, iconPrecipMin, iconPrecipMax];
+      const pMin = round1(Math.min(...allPrecip));
+      const pMax = round1(Math.max(...allPrecip));
+      if (pMax > 0 && pMin !== pMax) {
+        precipHtml = pMin + '-' + pMax + ' mm';
+      } else if (pMax > 0) {
+        precipHtml = pMax + ' mm';
+      } else {
+        precipHtml = (ens?.precipProb ?? d.precipProb ?? 0) + '%';
+      }
+      if (pMax > 0 && ens?.precipProb != null && ens.precipProb < 100) {
         precipHtml += ' (' + ens.precipProb + '%)';
       }
-    } else if (ens?.precipProb != null) {
-      precipHtml = ens.precipProb + '%';
     } else {
-      precipHtml = (d.precipProb ?? 0) + '%';
+      precipHtml = msPrecip > 0 ? msPrecip + ' mm' : (d.precipProb ?? 0) + '%';
     }
 
     el.innerHTML =
         '<div class="daily-day">' + dayLabel + '</div>'
       + '<div class="daily-icon">' + (d.icon || '☀️') + '</div>'
       + '<div class="daily-temp-range">'
-        + '<span class="temp-low">' + d.tempMin + '°</span>'
+        + '<span class="temp-low">' + combinedTempMin + '°</span>'
         + '<div class="temp-bar-container">'
           + '<div class="temp-bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div>'
         + '</div>'
-        + '<span class="temp-high">' + d.tempMax + '°</span>'
+        + '<span class="temp-high">' + combinedTempMax + '°</span>'
       + '</div>'
       + '<div class="daily-confidence">'
         + '<span class="confidence-dot" style="background:' + dotColor + '"></span>'
