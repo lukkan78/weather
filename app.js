@@ -986,7 +986,7 @@ async function fetchOceanForecast(lat, lon) {
             windSpeed: ts[0]?.data?.instant?.details?.wind_from_direction != null ? {
               speed: ts[0].data.instant.details.wind_speed,
               direction: ts[0].data.instant.details.wind_from_direction,
-              dirText: getWindDirection(ts[0].data.instant.details.wind_from_direction)
+              dirText: degToDir(ts[0].data.instant.details.wind_from_direction)
             } : null,
             waveHeight: ts[0]?.data?.instant?.details?.sea_surface_wave_height ?? null,
             waterTemp: ts[0]?.data?.instant?.details?.sea_water_temperature ?? null,
@@ -1016,26 +1016,35 @@ async function fetchSMHIRadar() {
     const infoRes = await fetch(
       'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp'
     );
-    if (!infoRes.ok) return null;
+    if (!infoRes.ok) {
+      console.log('SMHI Radar API returned:', infoRes.status);
+      return null;
+    }
     const info = await infoRes.json();
 
-    // Hämta senaste datumet
-    const lastFiles = info.files || [];
-    if (!lastFiles.length) return null;
+    // API:et returnerar lastFiles (senaste bilderna)
+    const lastFiles = info.lastFiles || info.files || [];
+    if (!lastFiles.length) {
+      console.log('SMHI Radar: No files in response', info);
+      return null;
+    }
 
-    // Sortera efter tid (nyast först) och ta de senaste 12 (60 min, 5 min intervall)
+    // Filtrera PNG-filer och sortera (nyast först), ta senaste 12 (60 min)
     const pngFiles = lastFiles
-      .filter(f => f.key?.endsWith('.png'))
-      .sort((a, b) => new Date(b.valid) - new Date(a.valid))
+      .filter(f => f.key?.endsWith('.png') || f.format === 'png')
+      .sort((a, b) => new Date(b.valid || b.date) - new Date(a.valid || a.date))
       .slice(0, 12);
 
-    if (!pngFiles.length) return null;
+    if (!pngFiles.length) {
+      console.log('SMHI Radar: No PNG files found');
+      return null;
+    }
 
     // Bygg fram URL:er för bilderna
     const baseUrl = 'https://opendata-download-radar.smhi.se';
     const frames = pngFiles.map(f => ({
-      time: f.valid,
-      url: baseUrl + f.link,
+      time: f.valid || f.date,
+      url: f.link?.startsWith('http') ? f.link : baseUrl + f.link,
       formats: f.formats
     })).reverse(); // Äldst först för animation
 
@@ -1054,14 +1063,6 @@ async function fetchSMHIRadar() {
   } catch {
     return null;
   }
-}
-
-// ── Vindriktning till text ──────────────────────────────────────────────────
-function getWindDirection(degrees) {
-  if (degrees == null) return '';
-  const dirs = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSV', 'SV', 'VSV', 'V', 'VNV', 'NV', 'NNV'];
-  const index = Math.round(degrees / 22.5) % 16;
-  return dirs[index];
 }
 
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
@@ -2240,6 +2241,13 @@ function renderRadar(radarData, lat, lon) {
 function initRadarMap(frames, lat, lon, bounds) {
   const container = document.getElementById('radarMapContainer');
   if (!container) return;
+
+  // Kolla om Leaflet är laddat
+  if (typeof L === 'undefined') {
+    console.warn('Leaflet not loaded, skipping radar map');
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Kartan kunde inte laddas</div>';
+    return;
+  }
 
   // Rensa gammal karta
   if (radarMap) {
