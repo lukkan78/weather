@@ -1016,26 +1016,35 @@ async function fetchSMHIRadar() {
     const infoRes = await fetch(
       'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp'
     );
-    if (!infoRes.ok) return null;
+    if (!infoRes.ok) {
+      console.log('SMHI Radar API returned:', infoRes.status);
+      return null;
+    }
     const info = await infoRes.json();
 
-    // Hämta senaste datumet
-    const lastFiles = info.files || [];
-    if (!lastFiles.length) return null;
+    // API:et returnerar lastFiles (senaste bilderna)
+    const lastFiles = info.lastFiles || info.files || [];
+    if (!lastFiles.length) {
+      console.log('SMHI Radar: No files in response', info);
+      return null;
+    }
 
-    // Sortera efter tid (nyast först) och ta de senaste 12 (60 min, 5 min intervall)
+    // Filtrera PNG-filer och sortera (nyast först), ta senaste 12 (60 min)
     const pngFiles = lastFiles
-      .filter(f => f.key?.endsWith('.png'))
-      .sort((a, b) => new Date(b.valid) - new Date(a.valid))
+      .filter(f => f.key?.endsWith('.png') || f.format === 'png')
+      .sort((a, b) => new Date(b.valid || b.date) - new Date(a.valid || a.date))
       .slice(0, 12);
 
-    if (!pngFiles.length) return null;
+    if (!pngFiles.length) {
+      console.log('SMHI Radar: No PNG files found');
+      return null;
+    }
 
     // Bygg fram URL:er för bilderna
     const baseUrl = 'https://opendata-download-radar.smhi.se';
     const frames = pngFiles.map(f => ({
-      time: f.valid,
-      url: baseUrl + f.link,
+      time: f.valid || f.date,
+      url: f.link?.startsWith('http') ? f.link : baseUrl + f.link,
       formats: f.formats
     })).reverse(); // Äldst först för animation
 
