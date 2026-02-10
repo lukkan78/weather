@@ -44,6 +44,7 @@ const currentGust    = $('currentGust');
 const warningsSection= $('warningsSection');
 const airQualitySection = $('airQualitySection');
 const uvSection      = $('uvSection');
+const nowcastSection = $('nowcastSection');
 const forecastText   = $('forecastText');
 const forecastSummary= $('forecastSummary');
 const searchClear    = $('searchClear');
@@ -884,6 +885,70 @@ async function fetchPollen(lat, lon) {
   }
 }
 
+// ── API: YR Nowcast (radar-baserad 0-2h) ────────────────────────────────────
+async function fetchYRNowcast(lat, lon) {
+  try {
+    const res = await fetch(
+      'https://api.met.no/weatherapi/nowcast/2.0/complete?lat=' + lat.toFixed(4) + '&lon=' + lon.toFixed(4)
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    const ts = data.properties?.timeseries;
+    if (!ts?.length) return null;
+
+    // Radar-uppdaterad tid
+    const radarTime = data.properties?.meta?.radar_coverage;
+
+    // Konvertera till enkel struktur med 5-min intervall
+    return {
+      source: 'YR Nowcast',
+      radarCoverage: radarTime,
+      updated: data.properties?.meta?.updated_at,
+      data: ts.map(e => ({
+        time: e.time,
+        precipRate: e.data?.instant?.details?.precipitation_rate ?? 0,  // mm/h
+        precipAmount: e.data?.next_1_hours?.details?.precipitation_amount ?? null
+      }))
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── API: Open-Meteo Minutely (15-min intervall, 2-6h) ───────────────────────
+async function fetchOpenMeteoMinutely(lat, lon) {
+  try {
+    const url =
+      'https://api.open-meteo.com/v1/forecast?' +
+      'latitude=' + lat + '&longitude=' + lon +
+      '&minutely_15=precipitation,precipitation_probability' +
+      '&forecast_days=1' +
+      '&timezone=auto';
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+
+    if (!d.minutely_15?.time?.length) return null;
+
+    const times = d.minutely_15.time;
+    const precip = d.minutely_15.precipitation || [];
+    const prob = d.minutely_15.precipitation_probability || [];
+
+    return {
+      source: 'Open-Meteo',
+      data: times.map((t, i) => ({
+        time: t,
+        precipMm: precip[i] ?? 0,
+        precipProb: prob[i] ?? 0
+      }))
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
 function calcFeelsLike(temp, wind, humidity) {
   // Wind Chill (när det är kallt och blåsigt)
@@ -1555,6 +1620,220 @@ function renderUV(hourly) {
   }
 }
 
+// ── Render Nowcast (Nederbördsanalys) ───────────────────────────────────────
+function renderNowcast(yrNowcast, omMinutely) {
+  if (!nowcastSection) return;
+
+  const now = new Date();
+  let combinedData = [];
+
+  // Kombinera YR Nowcast (0-2h, högre upplösning) med Open-Meteo (2-6h)
+  if (yrNowcast?.data?.length) {
+    // YR ger precipitation_rate i mm/h, konvertera till mm per 5-min intervall
+    yrNowcast.data.forEach(d => {
+      const t = new Date(d.time);
+      const hoursAhead = (t - now) / (1000 * 60 * 60);
+      if (hoursAhead >= -0.1 && hoursAhead <= 2) {
+        combinedData.push({
+          time: t,
+          precipMm: (d.precipRate / 12) || 0,  // mm/h -> mm per 5 min
+          source: 'radar'
+        });
+      }
+    });
+  }
+
+  // Open-Meteo för 2-6h (15-min intervall)
+  if (omMinutely?.data?.length) {
+    omMinutely.data.forEach(d => {
+      const t = new Date(d.time);
+      const hoursAhead = (t - now) / (1000 * 60 * 60);
+      if (hoursAhead > 2 && hoursAhead <= 6) {
+        combinedData.push({
+          time: t,
+          precipMm: d.precipMm || 0,
+          precipProb: d.precipProb || 0,
+          source: 'model'
+        });
+      }
+    });
+  }
+
+  // Sortera efter tid
+  combinedData.sort((a, b) => a.time - b.time);
+
+  // Om ingen data, dölj sektionen
+  if (combinedData.length < 3) {
+    nowcastSection.style.display = 'none';
+    return;
+  }
+
+  nowcastSection.style.display = 'block';
+
+  // Beräkna statistik
+  const totalPrecip = combinedData.reduce((sum, d) => sum + d.precipMm, 0);
+  const maxPrecip = Math.max(...combinedData.map(d => d.precipMm), 0.1);
+  const hasRadar = combinedData.some(d => d.source === 'radar');
+
+  // Hitta torra perioder (minst 30 min utan nederbörd)
+  const dryPeriods = [];
+  let dryStart = null;
+
+  combinedData.forEach((d, i) => {
+    if (d.precipMm < 0.05) {
+      if (!dryStart) dryStart = { idx: i, time: d.time };
+    } else {
+      if (dryStart) {
+        const duration = (d.time - dryStart.time) / (1000 * 60);
+        if (duration >= 30) {
+          dryPeriods.push({
+            start: dryStart.time,
+            end: combinedData[i - 1]?.time || d.time,
+            duration: Math.round(duration)
+          });
+        }
+        dryStart = null;
+      }
+    }
+  });
+
+  // Avsluta sista torra perioden
+  if (dryStart) {
+    const lastTime = combinedData[combinedData.length - 1].time;
+    const duration = (lastTime - dryStart.time) / (1000 * 60);
+    if (duration >= 30) {
+      dryPeriods.push({
+        start: dryStart.time,
+        end: lastTime,
+        duration: Math.round(duration)
+      });
+    }
+  }
+
+  // Avgör om det är torrt just nu
+  const nextHourData = combinedData.filter(d => (d.time - now) < 60 * 60 * 1000);
+  const nextHourPrecip = nextHourData.reduce((sum, d) => sum + d.precipMm, 0);
+  const isDryNow = nextHourPrecip < 0.1;
+
+  // Formattera tid
+  const fmtTime = (date) => {
+    const h = date.getHours().toString().padStart(2, '0');
+    const m = date.getMinutes().toString().padStart(2, '0');
+    return h + ':' + m;
+  };
+
+  // Skapa titeln
+  let titleText = 'Nederbörd kommande 6h';
+  let titleIcon = '🌧️';
+  if (isDryNow && totalPrecip < 0.5) {
+    titleText = 'Uppehåll kommande timmar';
+    titleIcon = '☀️';
+  } else if (totalPrecip > 5) {
+    titleIcon = '⛈️';
+  }
+
+  // Bygg HTML
+  let html = '<h3 class="section-title section-toggle" id="nowcastToggle">' +
+    titleIcon + ' ' + titleText +
+    ' <span class="toggle-icon">▼</span></h3>';
+
+  html += '<div class="nowcast-content">';
+
+  // Tidslinjevisualisering
+  html += '<div class="nowcast-timeline">';
+  html += '<div class="nowcast-bars">';
+
+  combinedData.forEach((d, i) => {
+    const heightPct = Math.max(2, (d.precipMm / maxPrecip) * 100);
+    const isDry = d.precipMm < 0.05;
+    const isRadar = d.source === 'radar';
+    const opacity = isRadar ? 1 : 0.7;
+    html += '<div class="nowcast-bar' + (isDry ? ' dry' : '') +
+      '" style="height:' + heightPct + '%;opacity:' + opacity + '" ' +
+      'title="' + fmtTime(d.time) + ': ' + round1(d.precipMm) + ' mm"></div>';
+  });
+
+  html += '</div>';
+
+  // Tidsetiketter
+  html += '<div class="nowcast-time-labels">';
+  html += '<span>Nu</span>';
+  html += '<span>+2h</span>';
+  html += '<span>+4h</span>';
+  html += '<span>+6h</span>';
+  html += '</div>';
+  html += '</div>';
+
+  // Statistik-kort
+  html += '<div class="nowcast-stats">';
+
+  // Ackumulerad nederbörd
+  html += '<div class="nowcast-stat">' +
+    '<div class="nowcast-stat-label">Totalt (6h)</div>' +
+    '<div class="nowcast-stat-value">' + round1(totalPrecip) + ' mm</div>' +
+    '</div>';
+
+  // Närmaste timmen
+  html += '<div class="nowcast-stat">' +
+    '<div class="nowcast-stat-label">Nästa timme</div>' +
+    '<div class="nowcast-stat-value">' + round1(nextHourPrecip) + ' mm</div>' +
+    '<div class="nowcast-stat-sub">' + (isDryNow ? '☀️ Uppehåll' : '🌧️ Nederbörd') + '</div>' +
+    '</div>';
+
+  // Intensitet
+  const intensity = maxPrecip < 0.5 ? 'Ingen/Lätt' :
+    maxPrecip < 2 ? 'Måttlig' :
+    maxPrecip < 5 ? 'Kraftig' : 'Skyfall';
+  html += '<div class="nowcast-stat">' +
+    '<div class="nowcast-stat-label">Max intensitet</div>' +
+    '<div class="nowcast-stat-value">' + intensity + '</div>' +
+    '<div class="nowcast-stat-sub">' + round1(maxPrecip * 12) + ' mm/h</div>' +
+    '</div>';
+
+  html += '</div>';
+
+  // Torra perioder
+  if (dryPeriods.length > 0) {
+    html += '<div class="dry-periods">';
+    html += '<div class="dry-periods-title">☀️ Bästa fönster för utevistelse</div>';
+    html += '<div class="dry-period-list">';
+
+    dryPeriods.slice(0, 3).forEach(p => {
+      const durationText = p.duration >= 60 ?
+        Math.floor(p.duration / 60) + 'h ' + (p.duration % 60) + 'min' :
+        p.duration + ' min';
+      html += '<div class="dry-period-item">' +
+        '<span class="dry-period-icon">🌤️</span>' +
+        '<span class="dry-period-text">' + fmtTime(p.start) + ' – ' + fmtTime(p.end) + '</span>' +
+        '<span class="dry-period-duration">' + durationText + '</span>' +
+        '</div>';
+    });
+
+    html += '</div>';
+    html += '</div>';
+  }
+
+  // Källinfo
+  html += '<div class="nowcast-sources">';
+  if (hasRadar) {
+    html += '<span class="ensemble-badge">📡 Radar</span> YR Nowcast (0-2h)';
+  }
+  html += ' + Open-Meteo (2-6h)';
+  html += '</div>';
+
+  html += '</div>';
+
+  nowcastSection.innerHTML = html;
+
+  // Toggle-lyssnare
+  const toggle = document.getElementById('nowcastToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      nowcastSection.classList.toggle('open');
+    });
+  }
+}
+
 // ── Render Prognos-text ─────────────────────────────────────────────────────
 function renderForecastText(text) {
   if (!forecastSummary) return;
@@ -1915,7 +2194,7 @@ async function fetchWeather(lat, lon, name) {
 
   try {
     // Hämta väderdata från alla källor parallellt
-    const [weatherSettled, warnings, airQuality, pollen, iconEuEns] = await Promise.all([
+    const [weatherSettled, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely] = await Promise.all([
       Promise.allSettled([
         fetchOpenMeteo(lat, lon),
         fetchYR(lat, lon),
@@ -1925,6 +2204,8 @@ async function fetchWeather(lat, lon, name) {
       fetchAirQualityEnsemble(lat, lon),  // Copernicus CAMS ensemble
       fetchPollen(lat, lon),
       fetchIconEuEnsemble(lat, lon),  // ICON-EU ensemble för nederbörd/vind
+      fetchYRNowcast(lat, lon),       // Radar-baserad nowcast 0-2h
+      fetchOpenMeteoMinutely(lat, lon), // 15-min data 2-6h
     ]);
 
     const names   = ['Open-Meteo', 'YR', 'SMHI'];
@@ -1955,6 +2236,7 @@ async function fetchWeather(lat, lon, name) {
     renderWarnings(warnings);
     renderAirQuality(airQuality, pollen);
     renderUV(ens.hourly);
+    renderNowcast(yrNowcast, omMinutely);
 
     // Generera och visa beskrivande text
     const forecastTextStr = generateForecastText(ens, ens.daily, warnings);
@@ -1966,7 +2248,7 @@ async function fetchWeather(lat, lon, name) {
     // Persist for offline + recent location
     try {
       localStorage.setItem('väder_cache', JSON.stringify({
-        loc: lastLoc, results, ens, warnings, airQuality, pollen, iconEuEns, ts: Date.now()
+        loc: lastLoc, results, ens, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely, ts: Date.now()
       }));
       // Spara senaste plats separat (för snabbval)
       localStorage.setItem('väder_recent', JSON.stringify(lastLoc));
@@ -1999,6 +2281,7 @@ function loadCache() {
     renderWarnings(c.warnings);
     renderAirQuality(c.airQuality, c.pollen);
     renderUV(c.ens.hourly);
+    renderNowcast(c.yrNowcast, c.omMinutely);
 
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
