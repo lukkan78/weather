@@ -986,7 +986,7 @@ async function fetchOceanForecast(lat, lon) {
             windSpeed: ts[0]?.data?.instant?.details?.wind_from_direction != null ? {
               speed: ts[0].data.instant.details.wind_speed,
               direction: ts[0].data.instant.details.wind_from_direction,
-              dirText: getWindDirection(ts[0].data.instant.details.wind_from_direction)
+              dirText: degToDir(ts[0].data.instant.details.wind_from_direction)
             } : null,
             waveHeight: ts[0]?.data?.instant?.details?.sea_surface_wave_height ?? null,
             waterTemp: ts[0]?.data?.instant?.details?.sea_water_temperature ?? null,
@@ -1054,14 +1054,6 @@ async function fetchSMHIRadar() {
   } catch {
     return null;
   }
-}
-
-// ── Vindriktning till text ──────────────────────────────────────────────────
-function getWindDirection(degrees) {
-  if (degrees == null) return '';
-  const dirs = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSV', 'SV', 'VSV', 'V', 'VNV', 'NV', 'NNV'];
-  const index = Math.round(degrees / 22.5) % 16;
-  return dirs[index];
 }
 
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
@@ -2240,6 +2232,13 @@ function renderRadar(radarData, lat, lon) {
 function initRadarMap(frames, lat, lon, bounds) {
   const container = document.getElementById('radarMapContainer');
   if (!container) return;
+
+  // Kolla om Leaflet är laddat
+  if (typeof L === 'undefined') {
+    console.warn('Leaflet not loaded, skipping radar map');
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Kartan kunde inte laddas</div>';
+    return;
+  }
 
   // Rensa gammal karta
   if (radarMap) {
