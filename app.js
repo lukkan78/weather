@@ -1083,7 +1083,7 @@ function createRadarFallback() {
     },
     frames: [],  // Tom - vi visar iframe istället
     fallback: true,
-    embedUrl: 'https://www.smhi.se/vader/kartor/radar-blixt/q/Sverige/1'
+    embedUrl: 'https://opendata-download-radar.smhi.se/explore/'
   };
 }
 
@@ -2205,12 +2205,16 @@ function renderRadar(radarData, lat, lon) {
 
     html += '<div class="radar-content">';
     html += '<div class="radar-embed-container">';
-    html += '<iframe src="https://www.smhi.se/vadret/kartor/nederbordsradar/q/Sverige" ' +
-      'class="radar-iframe" frameborder="0" loading="lazy"></iframe>';
+    html += '<iframe src="https://opendata-download-radar.smhi.se/explore/" ' +
+      'class="radar-iframe" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>';
     html += '</div>';
-    html += '<div class="radar-info">';
-    html += '<a href="https://www.smhi.se/vader/kartor/radar-blixt" target="_blank" class="radar-link">' +
-      '🔗 Öppna SMHI Radar i nytt fönster</a>';
+    html += '<div class="radar-links">';
+    html += '<a href="https://opendata-download-radar.smhi.se/explore/" target="_blank" class="radar-link">' +
+      '📡 SMHI Open Data Radar</a>';
+    html += '<a href="https://www.smhi.se/vader/radar-och-satellit/radar-blixt" target="_blank" class="radar-link">' +
+      '🌩️ Radar & Blixt</a>';
+    html += '<a href="https://regnradar.se/" target="_blank" class="radar-link">' +
+      '🌧️ Regnradar.se</a>';
     html += '</div>';
     html += '</div>';
 
