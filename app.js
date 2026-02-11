@@ -1012,51 +1012,69 @@ async function fetchOceanForecast(lat, lon) {
 // ── API: SMHI Radar (animerade radarbilder) ─────────────────────────────────
 async function fetchSMHIRadar() {
   try {
-    // Hämta info om tillgängliga radarbilder för idag
     const now = new Date();
     const year = now.getUTCFullYear();
     const month = String(now.getUTCMonth() + 1).padStart(2, '0');
     const day = String(now.getUTCDate()).padStart(2, '0');
 
-    // Först: hämta dagens radar-filer
+    // Hämta dagens radar-filer
     const dayUrl = 'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp/' +
       year + '/' + month + '/' + day;
 
     const res = await fetch(dayUrl);
     if (!res.ok) {
-      console.log('SMHI Radar day API returned:', res.status);
+      console.log('SMHI Radar API error:', res.status);
       return null;
     }
 
     const data = await res.json();
+    console.log('SMHI Radar API response:', data);
+
     const files = data.files || [];
-
     if (!files.length) {
-      console.log('SMHI Radar: No files for today');
+      console.log('SMHI Radar: No files');
       return null;
     }
 
-    // Filtrera PNG-filer och sortera efter tid (nyast först)
-    const pngFiles = files
-      .filter(f => f.formats?.some(fmt => fmt.key === 'png'))
+    // Sortera efter tid (nyast först) och ta senaste 12
+    const sortedFiles = files
+      .filter(f => f.key && f.valid)
       .sort((a, b) => new Date(b.valid) - new Date(a.valid))
-      .slice(0, 12);  // Senaste 12 bilder (60 min)
+      .slice(0, 12);
 
-    if (!pngFiles.length) {
-      console.log('SMHI Radar: No PNG files found');
+    if (!sortedFiles.length) {
       return null;
     }
 
-    // Bygg URL:er för PNG-bilderna
+    // Bygg URL:er - försök flera metoder
     const baseUrl = 'https://opendata-download-radar.smhi.se';
-    const frames = pngFiles.map(f => {
-      const pngFormat = f.formats.find(fmt => fmt.key === 'png');
-      return {
-        time: f.valid,
-        url: pngFormat ? baseUrl + pngFormat.link : null,
-        key: f.key
-      };
-    }).filter(f => f.url).reverse();  // Äldst först för animation
+    const frames = sortedFiles.map(f => {
+      let url = null;
+
+      // Metod 1: Använd formats array
+      if (f.formats?.length) {
+        const pngFmt = f.formats.find(fmt => fmt.key === 'png' || fmt.link?.endsWith('.png'));
+        if (pngFmt?.link) {
+          url = pngFmt.link.startsWith('http') ? pngFmt.link : baseUrl + pngFmt.link;
+        }
+      }
+
+      // Metod 2: Använd link direkt + .png
+      if (!url && f.link) {
+        const link = f.link.startsWith('http') ? f.link : baseUrl + f.link;
+        url = link.endsWith('.png') ? link : link + '.png';
+      }
+
+      // Metod 3: Konstruera URL från key
+      if (!url && f.key) {
+        url = baseUrl + '/api/version/latest/area/sweden/product/comp/' +
+          year + '/' + month + '/' + day + '/' + f.key + '.png';
+      }
+
+      return { time: f.valid, url, key: f.key };
+    }).filter(f => f.url).reverse();
+
+    console.log('SMHI Radar frames:', frames);
 
     if (!frames.length) {
       return null;
@@ -1065,13 +1083,7 @@ async function fetchSMHIRadar() {
     return {
       source: 'SMHI Radar',
       updated: data.updated || now.toISOString(),
-      bounds: {
-        // SWEREF99TM bounds för Sverige (ungefärlig WGS84)
-        north: 69.1,
-        south: 55.0,
-        west: 10.5,
-        east: 24.2
-      },
+      bounds: { north: 69.1, south: 55.0, west: 10.5, east: 24.2 },
       frames
     };
   } catch (err) {
