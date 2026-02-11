@@ -2187,6 +2187,10 @@ let radarAnimationTimer = null;
 let radarFrameIndex = 0;
 let radarFrames = [];
 
+let radarMap = null;
+let radarOverlay = null;
+let radarPositionMarker = null;
+
 function renderRadar(radarData, lat, lon) {
   const radarSection = document.getElementById('radarSection');
   if (!radarSection) return;
@@ -2195,6 +2199,12 @@ function renderRadar(radarData, lat, lon) {
   if (radarAnimationTimer) {
     clearInterval(radarAnimationTimer);
     radarAnimationTimer = null;
+  }
+
+  // Rensa tidigare karta
+  if (radarMap) {
+    radarMap.remove();
+    radarMap = null;
   }
 
   if (!radarData?.frames?.length) {
@@ -2215,9 +2225,9 @@ function renderRadar(radarData, lat, lon) {
 
   html += '<div class="radar-content">';
 
-  // Radar bild-container
-  html += '<div class="radar-image-container">';
-  html += '<img id="radarImage" class="radar-image" src="' + radarFrames[radarFrameIndex].url + '" alt="Väderradar Sverige">';
+  // Radar kart-container med Leaflet
+  html += '<div class="radar-map-container" id="radarMapContainer">';
+  html += '<div id="radarMap" style="width:100%;height:100%;border-radius:var(--radius-md);"></div>';
   html += '<div class="radar-time-display" id="radarTimeDisplay">' + fmtRadarTime + '</div>';
   html += '</div>';
 
@@ -2256,6 +2266,9 @@ function renderRadar(radarData, lat, lon) {
 
   radarSection.innerHTML = html;
 
+  // Initiera Leaflet-karta
+  initRadarMap(lat, lon);
+
   // Initiera animation
   initRadarAnimation();
 
@@ -2264,31 +2277,90 @@ function renderRadar(radarData, lat, lon) {
   if (toggle) {
     toggle.addEventListener('click', () => {
       radarSection.classList.toggle('open');
+      // Invalidera kartans storlek efter toggle-animation
+      setTimeout(() => {
+        if (radarMap) radarMap.invalidateSize();
+      }, 450);
     });
   }
+}
+
+// Initiera Leaflet-karta för radar
+function initRadarMap(lat, lon) {
+  const mapContainer = document.getElementById('radarMap');
+  if (!mapContainer || typeof L === 'undefined') {
+    console.warn('Leaflet eller kart-container saknas');
+    return;
+  }
+
+  // SMHI radar bounds (ungefärlig täckning för Sverige)
+  const radarBounds = [
+    [55.0, 10.5],   // Sydväst
+    [69.1, 24.2]    // Nordost
+  ];
+
+  // Skapa karta centrerad på användarens position
+  radarMap = L.map('radarMap', {
+    center: [lat, lon],
+    zoom: 6,
+    minZoom: 4,
+    maxZoom: 10,
+    zoomControl: true
+  });
+
+  // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(radarMap);
+
+  // Lägg till radar-bild som overlay
+  if (radarFrames.length > 0) {
+    radarOverlay = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
+      opacity: 0.7,
+      interactive: false
+    }).addTo(radarMap);
+  }
+
+  // Lägg till positionsmarkör
+  const positionIcon = L.divIcon({
+    className: 'radar-position-marker',
+    html: '📍',
+    iconSize: [24, 24],
+    iconAnchor: [12, 24]
+  });
+
+  radarPositionMarker = L.marker([lat, lon], { icon: positionIcon })
+    .addTo(radarMap)
+    .bindPopup('Din position');
+
+  // Förladda alla radar-bilder
+  radarFrames.forEach(f => {
+    const preload = new Image();
+    preload.src = f.url;
+  });
 }
 
 // Initiera radar-animation
 function initRadarAnimation() {
   const playBtn = document.getElementById('radarPlayBtn');
   const slider = document.getElementById('radarSlider');
-  const img = document.getElementById('radarImage');
   const timeDisplay = document.getElementById('radarTimeDisplay');
 
-  if (!playBtn || !slider || !img) return;
+  if (!playBtn || !slider) return;
 
   let isPlaying = false;
-
-  // Förladda alla bilder
-  radarFrames.forEach(f => {
-    const preload = new Image();
-    preload.src = f.url;
-  });
 
   function updateFrame(index) {
     if (!radarFrames[index]) return;
     radarFrameIndex = index;
-    img.src = radarFrames[index].url;
+
+    // Uppdatera Leaflet overlay om den finns
+    if (radarOverlay && radarMap) {
+      radarOverlay.setUrl(radarFrames[index].url);
+    }
+
     slider.value = index;
     if (timeDisplay) {
       const t = new Date(radarFrames[index].time);
