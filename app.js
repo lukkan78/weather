@@ -2299,13 +2299,15 @@ function initRadarMap(lat, lon) {
     [69.1, 24.2]    // Nordost
   ];
 
-  // Skapa karta centrerad på användarens position
+  // Skapa karta centrerad på användarens position, låst till radartäckningen
   radarMap = L.map('radarMap', {
     center: [lat, lon],
-    zoom: 6,
-    minZoom: 4,
+    zoom: 8,
+    minZoom: 5,
     maxZoom: 10,
-    zoomControl: true
+    zoomControl: true,
+    maxBounds: radarBounds,
+    maxBoundsViscosity: 1.0
   });
 
   // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
@@ -2323,7 +2325,7 @@ function initRadarMap(lat, lon) {
     }).addTo(radarMap);
   }
 
-  // Lägg till positionsmarkör
+  // Lägg till positionsmarkör med klickhändelse för att centrera och zooma
   const positionIcon = L.divIcon({
     className: 'radar-position-marker',
     html: '📍',
@@ -2333,11 +2335,20 @@ function initRadarMap(lat, lon) {
 
   radarPositionMarker = L.marker([lat, lon], { icon: positionIcon })
     .addTo(radarMap)
-    .bindPopup('Din position');
+    .bindPopup('Din position<br><small>Klicka för att centrera</small>');
 
-  // Förladda alla radar-bilder
-  radarFrames.forEach(f => {
+  // Klicka på markören för att centrera och zooma in
+  radarPositionMarker.on('click', () => {
+    radarMap.setView([lat, lon], 8, { animate: true });
+  });
+
+  // Förladda alla radar-bilder och hantera laddningsfel
+  radarFrames.forEach((f, i) => {
     const preload = new Image();
+    preload.onerror = () => {
+      console.warn('Kunde inte ladda radarbild:', f.url);
+      f.loadError = true;
+    };
     preload.src = f.url;
   });
 }
@@ -2354,6 +2365,21 @@ function initRadarAnimation() {
 
   function updateFrame(index) {
     if (!radarFrames[index]) return;
+
+    // Hoppa över frames med laddningsfel
+    if (radarFrames[index].loadError && isPlaying) {
+      // Hitta nästa giltiga frame
+      let nextValid = index + 1;
+      while (nextValid < radarFrames.length && radarFrames[nextValid].loadError) {
+        nextValid++;
+      }
+      if (nextValid < radarFrames.length) {
+        radarFrameIndex = nextValid;
+        updateFrame(nextValid);
+        return;
+      }
+    }
+
     radarFrameIndex = index;
 
     // Uppdatera Leaflet overlay om den finns
@@ -2387,7 +2413,7 @@ function initRadarAnimation() {
           clearInterval(radarAnimationTimer);
         }
         updateFrame(radarFrameIndex);
-      }, 500);
+      }, 1000); // Långsammare animation (1 sekund per frame)
     } else {
       clearInterval(radarAnimationTimer);
     }
