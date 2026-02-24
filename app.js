@@ -304,6 +304,7 @@ async function fetchOpenMeteo(lat, lon) {
       uv:       round1(d.hourly.uv_index?.[idx] ?? 0),
       icon:     wmo(cur.weathercode, isDay).icon,
       desc:     wmo(cur.weathercode, isDay).desc,
+      isDay:    isDay,
     },
     hourly: d.hourly.time.map((t, i) => {
       const h = Number(t.match(/T(\d{2})/)?.[1] ?? 12);
@@ -1212,11 +1213,15 @@ function generateForecastText(ens, daily, warnings) {
   const today = daily[0];
   const tomorrow = daily[1];
 
-  // Tid på dygnet
+  // Dag/natt från API (korrekt baserat på soluppgång/solnedgång)
+  const isDay = ens.current.isDay ?? true;
+  const isNight = !isDay;
+
+  // Tid på dygnet för tidsangivelse i texten
   const hour = new Date().getHours();
-  const isNight = hour < 6 || hour >= 21;
   const isMorning = hour >= 6 && hour < 12;
   const isAfternoon = hour >= 12 && hour < 18;
+  const isEvening = hour >= 18 && hour < 22;
 
   // Temperaturkänsla
   let tempFeel = '';
@@ -1254,7 +1259,8 @@ function generateForecastText(ens, daily, warnings) {
   // Lägg till tid
   if (isMorning) main += ' under morgonen';
   else if (isAfternoon) main += ' under eftermiddagen';
-  else if (isNight) main += ' ikväll';
+  else if (isEvening) main += ' ikväll';
+  else if (hour < 6) main += ' under natten';
   main += '.';
 
   // Vindkommentar
@@ -1481,6 +1487,7 @@ function calcEnsemble(results) {
       uv:       primary.current.uv ?? 0,  // UV endast från Open-Meteo
       icon:     primary.current.icon,
       desc:     primary.current.desc,
+      isDay:    primary.current.isDay ?? true,  // Dag/natt från Open-Meteo
     },
     confidence: { pct, cls, label },
     hourly:  ensembleHourly.length ? ensembleHourly : primary.hourly,
@@ -2387,12 +2394,17 @@ function renderRadar(radarData, lat, lon) {
   const latestTime = new Date(radarFrames[radarFrames.length - 1].time);
   const fmtRadarTime = latestTime.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 
+  // Beräkna hur gammal radardata är
+  const radarAgeMinutes = Math.round((Date.now() - latestTime.getTime()) / 60000);
+  const radarIsOld = radarAgeMinutes > 30;
+  const radarAgeText = radarIsOld ? ` (${radarAgeMinutes} min sen)` : '';
+
   const isYR = selectedRadarSource === 'yr';
   const sourceName = isYR ? 'YR' : 'SMHI';
   const coverageText = isYR ? 'Skandinavien' : 'Sverige';
 
   let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
-    '📡 Radar · ' + fmtRadarTime +
+    '📡 Radar · ' + fmtRadarTime + (radarIsOld ? '<span class="radar-old-warning">' + radarAgeText + '</span>' : '') +
     ' <span class="toggle-icon">▼</span></h3>';
 
   html += '<div class="radar-content">';
