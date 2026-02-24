@@ -1061,11 +1061,14 @@ async function fetchOceanForecast(lat, lon) {
 async function fetchSMHIRadar() {
   try {
     const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(now.getUTCDate()).padStart(2, '0');
+    // SMHI API använder svensk lokal tid (CET/CEST), inte UTC
+    // Konvertera till svensk tid för att hämta rätt dags filer
+    const stockholmTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Stockholm' }));
+    const year = stockholmTime.getFullYear();
+    const month = String(stockholmTime.getMonth() + 1).padStart(2, '0');
+    const day = String(stockholmTime.getDate()).padStart(2, '0');
 
-    // Hämta dagens radar-filer
+    // Hämta dagens radar-filer (svensk lokal tid)
     const dayUrl = 'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp/' +
       year + '/' + month + '/' + day;
 
@@ -1167,8 +1170,10 @@ async function fetchYRRadar() {
     return {
       source: 'YR Radar',
       updated: now.toISOString(),
-      // YR Nordic radar täcker hela Skandinavien
-      bounds: { north: 71.5, south: 53.0, west: -1.0, east: 36.0 },
+      // YR Nordic radar täcker Skandinavien med Lambert Conformal Conic-projektion
+      // Bounds justerade för att bättre matcha radarbildens faktiska täckning
+      // Projektion centrerad vid 63°N, 15°E
+      bounds: { north: 71.6, south: 52.2, west: -10.5, east: 39.0 },
       frames
     };
   } catch (err) {
