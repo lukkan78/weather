@@ -2354,12 +2354,15 @@ function renderRadar(radarData, lat, lon) {
 
   html += '</div></div></div>';
 
-  // Legend
+  // Legend - SMHI:s radarfärgskala
   html += '<div class="radar-legend">';
   html += '<span class="radar-legend-item"><span class="radar-color" style="background:#96d2fa"></span>Lätt</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#0064ff"></span>Måttlig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#0064ff"></span>Lätt-måttlig</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#00c800"></span>Måttlig</span>';
   html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ffff00"></span>Kraftig</span>';
-  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ff0000"></span>Stark</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ffa500"></span>Stark</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#ff0000"></span>Mycket stark</span>';
+  html += '<span class="radar-legend-item"><span class="radar-color" style="background:#c800c8"></span>Extrem</span>';
   html += '</div>';
 
   // Info
