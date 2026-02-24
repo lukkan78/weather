@@ -2189,6 +2189,7 @@ let radarFrames = [];
 
 let radarMap = null;
 let radarOverlay = null;
+let radarOverlays = []; // Array med alla förladddade overlays för smidig animation
 let radarPositionMarker = null;
 
 function renderRadar(radarData, lat, lon) {
@@ -2323,28 +2324,46 @@ function initRadarMap(lat, lon) {
     maxZoom: 19
   }).addTo(radarMap);
 
-  // Lägg till två radar-overlays för dubbelbuffring (eliminerar blinkningar)
+  // Rensa gamla overlays
+  radarOverlays = [];
+
+  // PRE-SKAPA ALLA OVERLAYS för smidig mobilanimation
+  // Istället för att byta URL (långsamt) byter vi bara opacity
   if (radarFrames.length > 0) {
-    // Primär overlay (dold tills bilden laddats för att undvika broken image)
-    radarOverlay = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
-      opacity: 0,
-      interactive: false,
-      className: 'radar-overlay-primary'
-    }).addTo(radarMap);
+    let loadedCount = 0;
+    const totalFrames = radarFrames.length;
 
-    // Visa overlay när första bilden laddats
-    const initialImg = new Image();
-    initialImg.onload = () => {
-      if (radarOverlay) radarOverlay.setOpacity(0.7);
-    };
-    initialImg.src = radarFrames[radarFrameIndex].url;
+    radarFrames.forEach((frame, i) => {
+      // Skapa overlay för varje frame med CSS-klass för GPU-acceleration
+      const overlay = L.imageOverlay(frame.url, radarBounds, {
+        opacity: 0,
+        interactive: false,
+        className: 'radar-frame'
+      }).addTo(radarMap);
 
-    // Sekundär overlay för buffring (dold tills laddad)
-    window.radarOverlayBuffer = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
-      opacity: 0,
-      interactive: false,
-      className: 'radar-overlay-buffer'
-    }).addTo(radarMap);
+      radarOverlays.push(overlay);
+      frame.overlayIndex = i;
+
+      // Förladda bilden och visa första frame när laddad
+      const preload = new Image();
+      preload.onload = () => {
+        frame.loaded = true;
+        frame.imageElement = preload;
+        loadedCount++;
+
+        // Visa första frame när den är laddad
+        if (i === radarFrameIndex && radarOverlays[i]) {
+          radarOverlays[i].setOpacity(0.7);
+          radarOverlay = radarOverlays[i];
+        }
+      };
+      preload.onerror = () => {
+        console.warn('Kunde inte ladda radarbild:', frame.url);
+        frame.loadError = true;
+        loadedCount++;
+      };
+      preload.src = frame.url;
+    });
   }
 
   // Lägg till positionsmarkör med klickhändelse för att centrera och zooma
@@ -2363,23 +2382,9 @@ function initRadarMap(lat, lon) {
   radarPositionMarker.on('click', () => {
     radarMap.setView([lat, lon], 8, { animate: true });
   });
-
-  // Förladda alla radar-bilder och spara Image-elementen för snabb visning
-  radarFrames.forEach((f, i) => {
-    const preload = new Image();
-    preload.onload = () => {
-      f.loaded = true;
-      f.imageElement = preload;
-    };
-    preload.onerror = () => {
-      console.warn('Kunde inte ladda radarbild:', f.url);
-      f.loadError = true;
-    };
-    preload.src = f.url;
-  });
 }
 
-// Initiera radar-animation
+// Initiera radar-animation med requestAnimationFrame för smidig mobilprestanda
 function initRadarAnimation() {
   const playBtn = document.getElementById('radarPlayBtn');
   const slider = document.getElementById('radarSlider');
@@ -2388,13 +2393,15 @@ function initRadarAnimation() {
   if (!playBtn || !slider) return;
 
   let isPlaying = false;
+  let lastFrameTime = 0;
+  const frameInterval = 800; // ms mellan frames (något snabbare för smidigare känsla)
+  let previousFrameIndex = -1;
 
   function updateFrame(index) {
-    if (!radarFrames[index]) return;
+    if (!radarFrames[index] || !radarOverlays.length) return;
 
     // Hoppa över frames med laddningsfel
     if (radarFrames[index].loadError && isPlaying) {
-      // Hitta nästa giltiga frame
       let nextValid = index + 1;
       while (nextValid < radarFrames.length && radarFrames[nextValid].loadError) {
         nextValid++;
@@ -2409,34 +2416,21 @@ function initRadarAnimation() {
     radarFrameIndex = index;
     const frame = radarFrames[index];
 
-    // Uppdatera Leaflet overlay med dubbelbuffring för att eliminera blinkningar
-    if (radarOverlay && radarMap && window.radarOverlayBuffer) {
-      // Om bilden redan är förladddad, använd den direkt
-      if (frame.loaded) {
-        // Sätt buffern till nya bilden och visa den omedelbart
-        window.radarOverlayBuffer.setUrl(frame.url);
-        window.radarOverlayBuffer.setOpacity(0.7);
-        radarOverlay.setOpacity(0);
-        // Byt roller - buffern blir primär
-        const temp = radarOverlay;
-        radarOverlay = window.radarOverlayBuffer;
-        window.radarOverlayBuffer = temp;
-      } else {
-        // Bilden laddas fortfarande, ladda in i buffern och vänta
-        const img = new Image();
-        img.onload = () => {
-          frame.loaded = true;
-          if (radarFrameIndex === index) { // Kontrollera att vi fortfarande vill visa denna frame
-            window.radarOverlayBuffer.setUrl(frame.url);
-            window.radarOverlayBuffer.setOpacity(0.7);
-            radarOverlay.setOpacity(0);
-            const temp = radarOverlay;
-            radarOverlay = window.radarOverlayBuffer;
-            window.radarOverlayBuffer = temp;
-          }
-        };
-        img.src = frame.url;
+    // OPTIMERAD ANIMERING: Byt bara opacity mellan förskapade overlays
+    // Detta är MYCKET snabbare på mobil än att använda setUrl()
+    if (radarOverlays.length > 0 && radarMap) {
+      // Dölj tidigare frame
+      if (previousFrameIndex >= 0 && previousFrameIndex !== index && radarOverlays[previousFrameIndex]) {
+        radarOverlays[previousFrameIndex].setOpacity(0);
       }
+
+      // Visa ny frame om den är laddad
+      if (radarOverlays[index] && frame.loaded) {
+        radarOverlays[index].setOpacity(0.7);
+        radarOverlay = radarOverlays[index];
+      }
+
+      previousFrameIndex = index;
     }
 
     slider.value = index;
@@ -2444,6 +2438,26 @@ function initRadarAnimation() {
       const t = new Date(radarFrames[index].time);
       timeDisplay.textContent = t.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
     }
+  }
+
+  // Använd requestAnimationFrame för smidigare animation på mobil
+  function animationLoop(timestamp) {
+    if (!isPlaying) return;
+
+    if (timestamp - lastFrameTime >= frameInterval) {
+      lastFrameTime = timestamp;
+
+      radarFrameIndex++;
+      if (radarFrameIndex >= radarFrames.length) {
+        radarFrameIndex = radarFrames.length - 1;
+        isPlaying = false;
+        playBtn.textContent = '▶ Spela';
+        return;
+      }
+      updateFrame(radarFrameIndex);
+    }
+
+    radarAnimationTimer = requestAnimationFrame(animationLoop);
   }
 
   playBtn.addEventListener('click', () => {
@@ -2454,20 +2468,17 @@ function initRadarAnimation() {
       // Starta från början om vi är på slutet
       if (radarFrameIndex >= radarFrames.length - 1) {
         radarFrameIndex = 0;
+        previousFrameIndex = -1;
+        // Dölj alla frames först
+        radarOverlays.forEach(o => o.setOpacity(0));
         updateFrame(0);
       }
-      radarAnimationTimer = setInterval(() => {
-        radarFrameIndex++;
-        if (radarFrameIndex >= radarFrames.length) {
-          radarFrameIndex = radarFrames.length - 1;
-          isPlaying = false;
-          playBtn.textContent = '▶ Spela';
-          clearInterval(radarAnimationTimer);
-        }
-        updateFrame(radarFrameIndex);
-      }, 1000); // Långsammare animation (1 sekund per frame)
+      lastFrameTime = performance.now();
+      radarAnimationTimer = requestAnimationFrame(animationLoop);
     } else {
-      clearInterval(radarAnimationTimer);
+      if (radarAnimationTimer) {
+        cancelAnimationFrame(radarAnimationTimer);
+      }
     }
   });
 
@@ -2475,7 +2486,9 @@ function initRadarAnimation() {
     if (isPlaying) {
       isPlaying = false;
       playBtn.textContent = '▶ Spela';
-      clearInterval(radarAnimationTimer);
+      if (radarAnimationTimer) {
+        cancelAnimationFrame(radarAnimationTimer);
+      }
     }
     updateFrame(parseInt(e.target.value));
   });
