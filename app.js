@@ -2191,6 +2191,40 @@ let radarMap = null;
 let radarOverlay = null;
 let radarOverlays = []; // Array med alla förladddade overlays för smidig animation
 let radarPositionMarker = null;
+let radarRefreshTimer = null; // Timer för automatisk uppdatering var 5:e minut
+let lastRadarLat = null;
+let lastRadarLon = null;
+
+// Automatisk radaruppdatering var 5:e minut (matchar SMHI:s uppdateringsfrekvens)
+async function refreshRadarData() {
+  if (!lastRadarLat || !lastRadarLon) return;
+
+  try {
+    const radarData = await fetchSMHIRadar();
+    if (radarData?.frames?.length) {
+      renderRadar(radarData, lastRadarLat, lastRadarLon);
+      console.log('Radar auto-uppdaterad:', new Date().toLocaleTimeString('sv-SE'));
+    }
+  } catch (err) {
+    console.log('Radar auto-uppdatering misslyckades:', err);
+  }
+}
+
+function startRadarRefreshTimer() {
+  // Rensa eventuell tidigare timer
+  if (radarRefreshTimer) {
+    clearInterval(radarRefreshTimer);
+  }
+  // Uppdatera var 5:e minut (300000 ms)
+  radarRefreshTimer = setInterval(refreshRadarData, 5 * 60 * 1000);
+}
+
+function stopRadarRefreshTimer() {
+  if (radarRefreshTimer) {
+    clearInterval(radarRefreshTimer);
+    radarRefreshTimer = null;
+  }
+}
 
 function renderRadar(radarData, lat, lon) {
   const radarSection = document.getElementById('radarSection');
@@ -2210,12 +2244,18 @@ function renderRadar(radarData, lat, lon) {
 
   if (!radarData?.frames?.length) {
     radarSection.style.display = 'none';
+    stopRadarRefreshTimer();
     return;
   }
 
   radarSection.style.display = 'block';
   radarFrames = radarData.frames;
   radarFrameIndex = radarFrames.length - 1;  // Börja med senaste
+
+  // Spara position och starta automatisk uppdatering
+  lastRadarLat = lat;
+  lastRadarLon = lon;
+  startRadarRefreshTimer();
 
   const latestTime = new Date(radarFrames[radarFrames.length - 1].time);
   const fmtRadarTime = latestTime.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
@@ -3164,6 +3204,17 @@ if (refreshBtn) {
     if (lastLoc) fetchWeather(lastLoc.lat, lastLoc.lon, lastLoc.name);
   });
 }
+
+// Pausa/återuppta radaruppdatering när fliken döljs/visas
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopRadarRefreshTimer();
+  } else if (lastRadarLat && lastRadarLon) {
+    // Uppdatera direkt när användaren kommer tillbaka, sen starta timer igen
+    refreshRadarData();
+    startRadarRefreshTimer();
+  }
+});
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!navigator.onLine) {
