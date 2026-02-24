@@ -2325,12 +2325,19 @@ function initRadarMap(lat, lon) {
 
   // Lägg till två radar-overlays för dubbelbuffring (eliminerar blinkningar)
   if (radarFrames.length > 0) {
-    // Primär overlay (visas)
+    // Primär overlay (dold tills bilden laddats för att undvika broken image)
     radarOverlay = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
-      opacity: 0.7,
+      opacity: 0,
       interactive: false,
       className: 'radar-overlay-primary'
     }).addTo(radarMap);
+
+    // Visa overlay när första bilden laddats
+    const initialImg = new Image();
+    initialImg.onload = () => {
+      if (radarOverlay) radarOverlay.setOpacity(0.7);
+    };
+    initialImg.src = radarFrames[radarFrameIndex].url;
 
     // Sekundär overlay för buffring (dold tills laddad)
     window.radarOverlayBuffer = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
