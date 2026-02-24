@@ -2058,6 +2058,7 @@ function renderNowcast(yrNowcast, omMinutely) {
         combinedData.push({
           time: t,
           precipMm: (d.precipRate / 12) || 0,  // mm/h -> mm per 5 min
+          interval: 5,  // 5-minuters intervall
           source: 'radar'
         });
       }
@@ -2074,6 +2075,7 @@ function renderNowcast(yrNowcast, omMinutely) {
           time: t,
           precipMm: d.precipMm || 0,
           precipProb: d.precipProb || 0,
+          interval: 15,  // 15-minuters intervall från Open-Meteo
           source: 'model'
         });
       }
@@ -2096,6 +2098,10 @@ function renderNowcast(yrNowcast, omMinutely) {
   const actualMaxPrecip = Math.max(...combinedData.map(d => d.precipMm));
   const maxPrecip = Math.max(actualMaxPrecip, 0.1); // För bar-höjder, minimum 0.1
   const hasRadar = combinedData.some(d => d.source === 'radar');
+
+  // Hitta datapunkten med högst intensitet (för korrekt mm/h-konvertering)
+  const maxPrecipPoint = combinedData.reduce((max, d) =>
+    d.precipMm > max.precipMm ? d : max, combinedData[0]);
 
   // Hitta torra perioder (minst 30 min utan nederbörd)
   const dryPeriods = [];
@@ -2166,8 +2172,8 @@ function renderNowcast(yrNowcast, omMinutely) {
   html += '<div class="nowcast-bars">';
 
   // SMHI-liknande färgkodning för nederbördsintensitet
-  const getPrecipColor = (mmPer5min) => {
-    const mmH = mmPer5min * 12; // Konvertera till mm/h
+  const getPrecipColor = (precipMm, interval) => {
+    const mmH = precipMm * (60 / (interval || 5)); // Konvertera till mm/h
     if (mmH < 0.5) return 'var(--accent-rain)';      // Lätt - ljusblå
     if (mmH < 4) return 'var(--confidence-high)';     // Måttlig - grön
     if (mmH < 10) return 'var(--confidence-medium)';  // Kraftig - gul/orange
@@ -2179,7 +2185,7 @@ function renderNowcast(yrNowcast, omMinutely) {
     const isDry = d.precipMm < 0.05;
     const isRadar = d.source === 'radar';
     const opacity = isRadar ? 1 : 0.7;
-    const barColor = isDry ? '' : 'background:' + getPrecipColor(d.precipMm) + ';';
+    const barColor = isDry ? '' : 'background:' + getPrecipColor(d.precipMm, d.interval) + ';';
     html += '<div class="nowcast-bar' + (isDry ? ' dry' : '') +
       '" style="height:' + heightPct + '%;opacity:' + opacity + ';' + barColor + '" ' +
       'title="' + fmtTime(d.time) + ': ' + round1(d.precipMm) + ' mm"></div>';
@@ -2212,8 +2218,10 @@ function renderNowcast(yrNowcast, omMinutely) {
     '<div class="nowcast-stat-sub">' + (isDryNow ? '☀️ Uppehåll' : '🌧️ Nederbörd') + '</div>' +
     '</div>';
 
-  // Intensitet - använd actualMaxPrecip för korrekt visning
-  const maxPrecipMmH = actualMaxPrecip * 12; // Konvertera till mm/h
+  // Intensitet - använd rätt konverteringsfaktor baserat på intervall
+  // 5-min data: * 12 för mm/h, 15-min data: * 4 för mm/h
+  const maxInterval = maxPrecipPoint?.interval || 5;
+  const maxPrecipMmH = actualMaxPrecip * (60 / maxInterval); // Konvertera till mm/h
   const intensity = actualMaxPrecip < 0.02 ? 'Ingen' :
     maxPrecipMmH < 0.5 ? 'Lätt' :
     maxPrecipMmH < 4 ? 'Måttlig' :
