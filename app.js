@@ -2299,16 +2299,22 @@ function initRadarMap(lat, lon) {
     [69.1, 24.2]    // Nordost
   ];
 
-  // Skapa karta centrerad på användarens position, låst till radartäckningen
+  // Skapa karta som visar hela Sverige som standard, låst till radartäckningen
   radarMap = L.map('radarMap', {
-    center: [lat, lon],
-    zoom: 8,
-    minZoom: 5,
+    center: [63.0, 17.5], // Centrum av Sverige
+    zoom: 5,
+    minZoom: 4,
     maxZoom: 10,
     zoomControl: true,
-    maxBounds: radarBounds,
+    maxBounds: [
+      [54.0, 8.5],   // Sydväst med marginal
+      [70.1, 26.2]   // Nordost med marginal
+    ],
     maxBoundsViscosity: 1.0
   });
+
+  // Passa kartan till Sverige-täckningen som standard
+  radarMap.fitBounds(radarBounds, { padding: [10, 10] });
 
   // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -2317,11 +2323,20 @@ function initRadarMap(lat, lon) {
     maxZoom: 19
   }).addTo(radarMap);
 
-  // Lägg till radar-bild som overlay
+  // Lägg till två radar-overlays för dubbelbuffring (eliminerar blinkningar)
   if (radarFrames.length > 0) {
+    // Primär overlay (visas)
     radarOverlay = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
       opacity: 0.7,
-      interactive: false
+      interactive: false,
+      className: 'radar-overlay-primary'
+    }).addTo(radarMap);
+
+    // Sekundär overlay för buffring (dold tills laddad)
+    window.radarOverlayBuffer = L.imageOverlay(radarFrames[radarFrameIndex].url, radarBounds, {
+      opacity: 0,
+      interactive: false,
+      className: 'radar-overlay-buffer'
     }).addTo(radarMap);
   }
 
@@ -2342,9 +2357,13 @@ function initRadarMap(lat, lon) {
     radarMap.setView([lat, lon], 8, { animate: true });
   });
 
-  // Förladda alla radar-bilder och hantera laddningsfel
+  // Förladda alla radar-bilder och spara Image-elementen för snabb visning
   radarFrames.forEach((f, i) => {
     const preload = new Image();
+    preload.onload = () => {
+      f.loaded = true;
+      f.imageElement = preload;
+    };
     preload.onerror = () => {
       console.warn('Kunde inte ladda radarbild:', f.url);
       f.loadError = true;
@@ -2381,10 +2400,36 @@ function initRadarAnimation() {
     }
 
     radarFrameIndex = index;
+    const frame = radarFrames[index];
 
-    // Uppdatera Leaflet overlay om den finns
-    if (radarOverlay && radarMap) {
-      radarOverlay.setUrl(radarFrames[index].url);
+    // Uppdatera Leaflet overlay med dubbelbuffring för att eliminera blinkningar
+    if (radarOverlay && radarMap && window.radarOverlayBuffer) {
+      // Om bilden redan är förladddad, använd den direkt
+      if (frame.loaded) {
+        // Sätt buffern till nya bilden och visa den omedelbart
+        window.radarOverlayBuffer.setUrl(frame.url);
+        window.radarOverlayBuffer.setOpacity(0.7);
+        radarOverlay.setOpacity(0);
+        // Byt roller - buffern blir primär
+        const temp = radarOverlay;
+        radarOverlay = window.radarOverlayBuffer;
+        window.radarOverlayBuffer = temp;
+      } else {
+        // Bilden laddas fortfarande, ladda in i buffern och vänta
+        const img = new Image();
+        img.onload = () => {
+          frame.loaded = true;
+          if (radarFrameIndex === index) { // Kontrollera att vi fortfarande vill visa denna frame
+            window.radarOverlayBuffer.setUrl(frame.url);
+            window.radarOverlayBuffer.setOpacity(0.7);
+            radarOverlay.setOpacity(0);
+            const temp = radarOverlay;
+            radarOverlay = window.radarOverlayBuffer;
+            window.radarOverlayBuffer = temp;
+          }
+        };
+        img.src = frame.url;
+      }
     }
 
     slider.value = index;
