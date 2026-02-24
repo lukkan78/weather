@@ -1143,52 +1143,32 @@ async function fetchSMHIRadar() {
 // ── API: YR Radar (Skandinavien) ────────────────────────────────────────────
 async function fetchYRRadar() {
   try {
-    // YR Radar API - hämta tillgängliga tider för nordisk radar
-    const apiUrl = 'https://api.met.no/weatherapi/radar/2.0/available?area=nordic&type=5level_reflectivity';
+    // Generera tider för senaste ~60 minuter (5-min intervall)
+    // MET.no radar uppdateras var 5:e minut
+    const now = new Date();
+    const frames = [];
 
-    const res = await fetch(apiUrl);
-    if (!res.ok) {
-      console.log('YR Radar API error:', res.status);
-      return null;
+    // Skapa 12 frames (senaste 60 min, 5 min intervall)
+    for (let i = 11; i >= 0; i--) {
+      const frameTime = new Date(now.getTime() - i * 5 * 60 * 1000);
+      // Runda ner till närmaste 5 minuter
+      frameTime.setMinutes(Math.floor(frameTime.getMinutes() / 5) * 5);
+      frameTime.setSeconds(0);
+      frameTime.setMilliseconds(0);
+
+      const isoTime = frameTime.toISOString().replace('.000Z', 'Z');
+      const url = 'https://api.met.no/weatherapi/radar/2.0/?area=nordic&type=5level_reflectivity&content=image&time=' + encodeURIComponent(isoTime);
+
+      frames.push({ time: isoTime, url });
     }
-
-    const data = await res.json();
-    console.log('YR Radar API response:', data);
-
-    // YR returnerar en lista av tillgängliga tider
-    const availableTimes = data.available || [];
-    if (!availableTimes.length) {
-      console.log('YR Radar: No available times');
-      return null;
-    }
-
-    // Ta de senaste 12 bilderna (varje bild är ca 5-10 min isär)
-    const sortedTimes = availableTimes
-      .sort((a, b) => new Date(b) - new Date(a))
-      .slice(0, 12);
-
-    if (!sortedTimes.length) {
-      return null;
-    }
-
-    // Bygg URL:er för varje tidpunkt
-    const baseUrl = 'https://api.met.no/weatherapi/radar/2.0/';
-    const frames = sortedTimes.map(time => {
-      const url = baseUrl + '?area=nordic&type=5level_reflectivity&content=image&time=' + encodeURIComponent(time);
-      return { time, url };
-    }).reverse(); // Äldst först för animation
 
     console.log('YR Radar frames:', frames);
 
-    if (!frames.length) {
-      return null;
-    }
-
     return {
       source: 'YR Radar',
-      updated: new Date().toISOString(),
+      updated: now.toISOString(),
       // YR Nordic radar täcker hela Skandinavien
-      bounds: { north: 72.0, south: 54.0, west: 0.0, east: 35.0 },
+      bounds: { north: 71.5, south: 53.0, west: -1.0, east: 36.0 },
       frames
     };
   } catch (err) {
@@ -2478,10 +2458,27 @@ function renderRadar(radarData, lat, lon) {
   if (yrBtn) {
     yrBtn.addEventListener('click', async () => {
       if (selectedRadarSource === 'yr') return;
-      selectedRadarSource = 'yr';
-      const newData = await fetchYRRadar();
-      if (newData?.frames?.length) {
-        renderRadar(newData, lastRadarLat, lastRadarLon);
+      // Visa laddningsindikator
+      yrBtn.textContent = 'Laddar...';
+      yrBtn.disabled = true;
+
+      try {
+        selectedRadarSource = 'yr';
+        const newData = await fetchYRRadar();
+        if (newData?.frames?.length) {
+          renderRadar(newData, lastRadarLat, lastRadarLon);
+        } else {
+          // Återställ om det misslyckades
+          selectedRadarSource = 'smhi';
+          yrBtn.innerHTML = 'YR <small>(Skandinavien)</small>';
+          yrBtn.disabled = false;
+          console.log('YR Radar: Kunde inte hämta data');
+        }
+      } catch (err) {
+        console.log('YR Radar switch error:', err);
+        selectedRadarSource = 'smhi';
+        yrBtn.innerHTML = 'YR <small>(Skandinavien)</small>';
+        yrBtn.disabled = false;
       }
     });
   }
