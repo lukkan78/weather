@@ -2299,11 +2299,9 @@ function initRadarMap(lat, lon) {
     [69.1, 24.2]    // Nordost
   ];
 
-  // Skapa karta som visar Sverige croppat som standard
+  // Skapa karta som passar exakt till SMHI radar overlay
   radarMap = L.map('radarMap', {
-    center: [62.0, 16.0], // Centrum av Sverige
-    zoom: 4,              // Zoom som visar hela Sverige croppat
-    minZoom: 4,
+    minZoom: 3,
     maxZoom: 10,
     zoomControl: true,
     maxBounds: [
@@ -2311,6 +2309,11 @@ function initRadarMap(lat, lon) {
       [70.1, 26.2]   // Nordost med marginal
     ],
     maxBoundsViscosity: 1.0
+  });
+
+  // Passa kartan exakt till SMHI overlay bounds (både bredd och höjd)
+  radarMap.fitBounds(radarBounds, {
+    padding: [0, 0]  // Ingen padding - exakt passning till overlay
   });
 
   // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
