@@ -458,6 +458,41 @@ async function fetchSMHI(lat, lon) {
 }
 
 // ── API: SMHI Vädervarningar ────────────────────────────────────────────────
+
+// Kontrollera om en punkt ligger inuti en polygon (ray casting algorithm)
+function pointInPolygon(lat, lon, polygon) {
+  let inside = false;
+  const n = polygon.length;
+
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const yi = polygon[i].lat;
+    const xi = polygon[i].lon;
+    const yj = polygon[j].lat;
+    const xj = polygon[j].lon;
+
+    if (((yi > lat) !== (yj > lat)) &&
+        (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+// Parsa SMHI polygon-sträng till array av {lat, lon}
+function parsePolygon(polygonStr) {
+  if (!polygonStr) return null;
+  try {
+    const points = polygonStr.trim().split(/\s+/).map(pair => {
+      const [lat, lon] = pair.split(',').map(Number);
+      return { lat, lon };
+    }).filter(p => !isNaN(p.lat) && !isNaN(p.lon));
+    return points.length >= 3 ? points : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchSMHIWarnings(lat, lon) {
   try {
     // Hämta alla aktiva varningar
@@ -465,19 +500,32 @@ async function fetchSMHIWarnings(lat, lon) {
     if (!res.ok) return [];
     const data = await res.json();
 
-    // Filtrera varningar som gäller för denna position (inom ~100km)
+    // Filtrera varningar som gäller för denna position
     const warnings = (data.alert || []).filter(alert => {
-      // Kolla om varningen gäller hela Sverige eller specifik region
       const info = alert.info?.[0];
       if (!info) return false;
 
-      // Kolla geografisk närhet om koordinater finns
-      const area = info.area?.[0];
-      if (area?.polygon) {
-        // Förenklad check - returnera alla för nu
-        return true;
+      // Kolla geografisk närhet - gå igenom alla områden
+      const areas = info.area || [];
+
+      // Om inga områden specificerats, anta att det gäller hela Sverige
+      if (areas.length === 0) return true;
+
+      // Kontrollera varje område
+      for (const area of areas) {
+        if (area.polygon) {
+          const polygon = parsePolygon(area.polygon);
+          if (polygon && pointInPolygon(lat, lon, polygon)) {
+            return true;
+          }
+        } else if (area.geocode) {
+          // Om inget polygon men geocode finns, returnera true som fallback
+          // (kan vara länskod eller liknande)
+          return true;
+        }
       }
-      return true;
+
+      return false;
     }).map(alert => {
       const info = alert.info?.[0] || {};
       const severity = info.severity || 'Unknown';
@@ -2008,7 +2056,8 @@ function renderNowcast(yrNowcast, omMinutely) {
 
   // Beräkna statistik
   const totalPrecip = combinedData.reduce((sum, d) => sum + d.precipMm, 0);
-  const maxPrecip = Math.max(...combinedData.map(d => d.precipMm), 0.1);
+  const actualMaxPrecip = Math.max(...combinedData.map(d => d.precipMm));
+  const maxPrecip = Math.max(actualMaxPrecip, 0.1); // För bar-höjder, minimum 0.1
   const hasRadar = combinedData.some(d => d.source === 'radar');
 
   // Hitta torra perioder (minst 30 min utan nederbörd)
@@ -2079,13 +2128,23 @@ function renderNowcast(yrNowcast, omMinutely) {
   html += '<div class="nowcast-timeline">';
   html += '<div class="nowcast-bars">';
 
+  // SMHI-liknande färgkodning för nederbördsintensitet
+  const getPrecipColor = (mmPer5min) => {
+    const mmH = mmPer5min * 12; // Konvertera till mm/h
+    if (mmH < 0.5) return 'var(--accent-rain)';      // Lätt - ljusblå
+    if (mmH < 4) return 'var(--confidence-high)';     // Måttlig - grön
+    if (mmH < 10) return 'var(--confidence-medium)';  // Kraftig - gul/orange
+    return 'var(--confidence-low)';                   // Skyfall - röd
+  };
+
   combinedData.forEach((d, i) => {
     const heightPct = Math.max(2, (d.precipMm / maxPrecip) * 100);
     const isDry = d.precipMm < 0.05;
     const isRadar = d.source === 'radar';
     const opacity = isRadar ? 1 : 0.7;
+    const barColor = isDry ? '' : 'background:' + getPrecipColor(d.precipMm) + ';';
     html += '<div class="nowcast-bar' + (isDry ? ' dry' : '') +
-      '" style="height:' + heightPct + '%;opacity:' + opacity + '" ' +
+      '" style="height:' + heightPct + '%;opacity:' + opacity + ';' + barColor + '" ' +
       'title="' + fmtTime(d.time) + ': ' + round1(d.precipMm) + ' mm"></div>';
   });
 
@@ -2116,26 +2175,31 @@ function renderNowcast(yrNowcast, omMinutely) {
     '<div class="nowcast-stat-sub">' + (isDryNow ? '☀️ Uppehåll' : '🌧️ Nederbörd') + '</div>' +
     '</div>';
 
-  // Intensitet
-  const intensity = maxPrecip < 0.5 ? 'Ingen/Lätt' :
-    maxPrecip < 2 ? 'Måttlig' :
-    maxPrecip < 5 ? 'Kraftig' : 'Skyfall';
+  // Intensitet - använd actualMaxPrecip för korrekt visning
+  const maxPrecipMmH = actualMaxPrecip * 12; // Konvertera till mm/h
+  const intensity = actualMaxPrecip < 0.02 ? 'Ingen' :
+    maxPrecipMmH < 0.5 ? 'Lätt' :
+    maxPrecipMmH < 4 ? 'Måttlig' :
+    maxPrecipMmH < 10 ? 'Kraftig' : 'Skyfall';
+  const intensitySub = actualMaxPrecip < 0.02 ? '☀️ Uppehåll' : round1(maxPrecipMmH) + ' mm/h';
   html += '<div class="nowcast-stat">' +
     '<div class="nowcast-stat-label">Max intensitet</div>' +
     '<div class="nowcast-stat-value">' + intensity + '</div>' +
-    '<div class="nowcast-stat-sub">' + round1(maxPrecip * 12) + ' mm/h</div>' +
+    '<div class="nowcast-stat-sub">' + intensitySub + '</div>' +
     '</div>';
 
-  // Konfidens
+  // Konfidens - baserat på radardata (YR Nowcast 0-2h)
   const radarCount = combinedData.filter(d => d.source === 'radar').length;
-  const modelCount = combinedData.filter(d => d.source === 'model').length;
   const radarPct = Math.round((radarCount / combinedData.length) * 100);
-  const confLevel = radarPct > 50 ? 'Hög' : radarPct > 20 ? 'Medel' : 'Lägre';
-  const confColor = radarPct > 50 ? 'var(--confidence-high)' : radarPct > 20 ? 'var(--confidence-medium)' : 'var(--confidence-low)';
+  // Radar täcker alltid 0-2h, resten är modelldata
+  const hasRadarData = radarCount > 0;
+  const confLevel = hasRadarData ? 'Hög' : 'Medel';
+  const confColor = hasRadarData ? 'var(--confidence-high)' : 'var(--confidence-medium)';
+  const confSub = hasRadarData ? '📡 Radar 0-2h' : '📊 Modelldata';
   html += '<div class="nowcast-stat">' +
     '<div class="nowcast-stat-label">Konfidens</div>' +
     '<div class="nowcast-stat-value" style="color:' + confColor + '">' + confLevel + '</div>' +
-    '<div class="nowcast-stat-sub">📡 ' + radarPct + '% radar</div>' +
+    '<div class="nowcast-stat-sub">' + confSub + '</div>' +
     '</div>';
 
   html += '</div>';
