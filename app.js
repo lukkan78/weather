@@ -1140,6 +1140,63 @@ async function fetchSMHIRadar() {
   }
 }
 
+// ── API: YR Radar (Skandinavien) ────────────────────────────────────────────
+async function fetchYRRadar() {
+  try {
+    // YR Radar API - hämta tillgängliga tider för nordisk radar
+    const apiUrl = 'https://api.met.no/weatherapi/radar/2.0/available?area=nordic&type=5level_reflectivity';
+
+    const res = await fetch(apiUrl);
+    if (!res.ok) {
+      console.log('YR Radar API error:', res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    console.log('YR Radar API response:', data);
+
+    // YR returnerar en lista av tillgängliga tider
+    const availableTimes = data.available || [];
+    if (!availableTimes.length) {
+      console.log('YR Radar: No available times');
+      return null;
+    }
+
+    // Ta de senaste 12 bilderna (varje bild är ca 5-10 min isär)
+    const sortedTimes = availableTimes
+      .sort((a, b) => new Date(b) - new Date(a))
+      .slice(0, 12);
+
+    if (!sortedTimes.length) {
+      return null;
+    }
+
+    // Bygg URL:er för varje tidpunkt
+    const baseUrl = 'https://api.met.no/weatherapi/radar/2.0/';
+    const frames = sortedTimes.map(time => {
+      const url = baseUrl + '?area=nordic&type=5level_reflectivity&content=image&time=' + encodeURIComponent(time);
+      return { time, url };
+    }).reverse(); // Äldst först för animation
+
+    console.log('YR Radar frames:', frames);
+
+    if (!frames.length) {
+      return null;
+    }
+
+    return {
+      source: 'YR Radar',
+      updated: new Date().toISOString(),
+      // YR Nordic radar täcker hela Skandinavien
+      bounds: { north: 72.0, south: 54.0, west: 0.0, east: 35.0 },
+      frames
+    };
+  } catch (err) {
+    console.log('YR Radar error:', err);
+    return null;
+  }
+}
+
 
 // ── "Känns som" beräkning (Wind Chill / Heat Index) ─────────────────────────
 function calcFeelsLike(temp, wind, humidity) {
@@ -2258,13 +2315,22 @@ let radarPositionMarker = null;
 let radarRefreshTimer = null; // Timer för automatisk uppdatering var 5:e minut
 let lastRadarLat = null;
 let lastRadarLon = null;
+let selectedRadarSource = 'smhi'; // 'smhi' eller 'yr'
+
+// Hämta radar baserat på vald källa
+async function fetchRadarBySource(source) {
+  if (source === 'yr') {
+    return await fetchYRRadar();
+  }
+  return await fetchSMHIRadar();
+}
 
 // Automatisk radaruppdatering var 5:e minut (matchar SMHI:s uppdateringsfrekvens)
 async function refreshRadarData() {
   if (!lastRadarLat || !lastRadarLon) return;
 
   try {
-    const radarData = await fetchSMHIRadar();
+    const radarData = await fetchRadarBySource(selectedRadarSource);
     if (radarData?.frames?.length) {
       renderRadar(radarData, lastRadarLat, lastRadarLon);
       console.log('Radar auto-uppdaterad:', new Date().toLocaleTimeString('sv-SE'));
@@ -2289,6 +2355,9 @@ function stopRadarRefreshTimer() {
     radarRefreshTimer = null;
   }
 }
+
+// Spara nuvarande radarData globalt för att kunna byta källa
+let currentRadarBounds = null;
 
 function renderRadar(radarData, lat, lon) {
   const radarSection = document.getElementById('radarSection');
@@ -2315,6 +2384,7 @@ function renderRadar(radarData, lat, lon) {
   radarSection.style.display = 'block';
   radarFrames = radarData.frames;
   radarFrameIndex = radarFrames.length - 1;  // Börja med senaste
+  currentRadarBounds = radarData.bounds;
 
   // Spara position och starta automatisk uppdatering
   lastRadarLat = lat;
@@ -2324,11 +2394,21 @@ function renderRadar(radarData, lat, lon) {
   const latestTime = new Date(radarFrames[radarFrames.length - 1].time);
   const fmtRadarTime = latestTime.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
 
+  const isYR = selectedRadarSource === 'yr';
+  const sourceName = isYR ? 'YR' : 'SMHI';
+  const coverageText = isYR ? 'Skandinavien' : 'Sverige';
+
   let html = '<h3 class="section-title section-toggle" id="radarToggle">' +
     '📡 Radar · ' + fmtRadarTime +
     ' <span class="toggle-icon">▼</span></h3>';
 
   html += '<div class="radar-content">';
+
+  // Käll-väljare (SMHI / YR)
+  html += '<div class="radar-source-selector">';
+  html += '<button id="radarSourceSMHI" class="radar-source-btn' + (selectedRadarSource === 'smhi' ? ' active' : '') + '">SMHI <small>(Sverige)</small></button>';
+  html += '<button id="radarSourceYR" class="radar-source-btn' + (selectedRadarSource === 'yr' ? ' active' : '') + '">YR <small>(Skandinavien)</small></button>';
+  html += '</div>';
 
   // Radar kart-container med Leaflet
   html += '<div class="radar-map-container" id="radarMapContainer">';
@@ -2354,7 +2434,7 @@ function renderRadar(radarData, lat, lon) {
 
   html += '</div></div></div>';
 
-  // Legend - SMHI:s radarfärgskala
+  // Legend - Radarfärgskala (likartad för båda källor)
   html += '<div class="radar-legend">';
   html += '<span class="radar-legend-item"><span class="radar-color" style="background:#96d2fa"></span>Lätt</span>';
   html += '<span class="radar-legend-item"><span class="radar-color" style="background:#0064ff"></span>Lätt-måttlig</span>';
@@ -2367,18 +2447,44 @@ function renderRadar(radarData, lat, lon) {
 
   // Info
   html += '<div class="radar-info">';
-  html += '<span class="ensemble-badge">SMHI</span> Radarkomposit · ' + radarFrames.length + ' bilder · ' + (radarFrames.length * 5) + ' min';
+  html += '<span class="ensemble-badge">' + sourceName + '</span> Radarkomposit (' + coverageText + ') · ' + radarFrames.length + ' bilder';
   html += '</div>';
 
   html += '</div>';
 
   radarSection.innerHTML = html;
 
-  // Initiera Leaflet-karta
-  initRadarMap(lat, lon);
+  // Initiera Leaflet-karta med rätt bounds
+  initRadarMap(lat, lon, currentRadarBounds);
 
   // Initiera animation
   initRadarAnimation();
+
+  // Käll-väljare lyssnare
+  const smhiBtn = document.getElementById('radarSourceSMHI');
+  const yrBtn = document.getElementById('radarSourceYR');
+
+  if (smhiBtn) {
+    smhiBtn.addEventListener('click', async () => {
+      if (selectedRadarSource === 'smhi') return;
+      selectedRadarSource = 'smhi';
+      const newData = await fetchSMHIRadar();
+      if (newData?.frames?.length) {
+        renderRadar(newData, lastRadarLat, lastRadarLon);
+      }
+    });
+  }
+
+  if (yrBtn) {
+    yrBtn.addEventListener('click', async () => {
+      if (selectedRadarSource === 'yr') return;
+      selectedRadarSource = 'yr';
+      const newData = await fetchYRRadar();
+      if (newData?.frames?.length) {
+        renderRadar(newData, lastRadarLat, lastRadarLon);
+      }
+    });
+  }
 
   // Toggle-lyssnare
   const toggle = document.getElementById('radarToggle');
@@ -2394,34 +2500,43 @@ function renderRadar(radarData, lat, lon) {
 }
 
 // Initiera Leaflet-karta för radar
-function initRadarMap(lat, lon) {
+function initRadarMap(lat, lon, bounds) {
   const mapContainer = document.getElementById('radarMap');
   if (!mapContainer || typeof L === 'undefined') {
     console.warn('Leaflet eller kart-container saknas');
     return;
   }
 
-  // SMHI radar bounds (ungefärlig täckning för Sverige)
-  const radarBounds = [
-    [55.0, 10.5],   // Sydväst
-    [69.1, 24.2]    // Nordost
+  // Radar bounds från aktuell källa (SMHI eller YR)
+  const radarBounds = bounds ? [
+    [bounds.south, bounds.west],   // Sydväst
+    [bounds.north, bounds.east]    // Nordost
+  ] : [
+    [55.0, 10.5],   // Fallback: SMHI bounds
+    [69.1, 24.2]
   ];
 
-  // Skapa karta som passar exakt till SMHI radar overlay
+  // Max bounds med marginal
+  const maxBounds = bounds ? [
+    [bounds.south - 1, bounds.west - 2],
+    [bounds.north + 1, bounds.east + 2]
+  ] : [
+    [54.0, 8.5],
+    [70.1, 26.2]
+  ];
+
+  // Skapa karta som passar till radar overlay
   radarMap = L.map('radarMap', {
     minZoom: 3,
     maxZoom: 10,
     zoomControl: true,
-    maxBounds: [
-      [54.0, 8.5],   // Sydväst med marginal
-      [70.1, 26.2]   // Nordost med marginal
-    ],
+    maxBounds: maxBounds,
     maxBoundsViscosity: 1.0
   });
 
-  // Passa kartan exakt till SMHI overlay bounds (både bredd och höjd)
+  // Passa kartan till overlay bounds
   radarMap.fitBounds(radarBounds, {
-    padding: [0, 0]  // Ingen padding - exakt passning till overlay
+    padding: [0, 0]
   });
 
   // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
@@ -2987,6 +3102,12 @@ async function fetchWeather(lat, lon, name) {
   hideError();
   lastLoc = { lat, lon, name };
 
+  // Auto-välj radar baserat på position
+  // SMHI täcker Sverige (lat 55-69, lon 10.5-24.2)
+  // Om användaren är utanför Sverige, välj YR som standard
+  const isInSweden = lat >= 55.0 && lat <= 69.1 && lon >= 10.5 && lon <= 24.2;
+  selectedRadarSource = isInSweden ? 'smhi' : 'yr';
+
   try {
     // Hämta väderdata från alla källor parallellt
     const [weatherSettled, warnings, airQuality, pollen, iconEuEns, yrNowcast, omMinutely, oceanForecast, radarData] = await Promise.all([
@@ -3002,7 +3123,7 @@ async function fetchWeather(lat, lon, name) {
       fetchYRNowcast(lat, lon),       // Radar-baserad nowcast 0-2h
       fetchOpenMeteoMinutely(lat, lon), // 15-min data 2-6h
       fetchOceanForecast(lat, lon),   // Havsvind för kustnära platser
-      fetchSMHIRadar(),               // Animerade radarbilder
+      fetchRadarBySource(selectedRadarSource),  // Radar baserat på vald källa
     ]);
 
     const names   = ['Open-Meteo', 'YR', 'SMHI'];
