@@ -2299,10 +2299,10 @@ function initRadarMap(lat, lon) {
     [69.1, 24.2]    // Nordost
   ];
 
-  // Skapa karta som visar hela Sverige som standard, låst till radartäckningen
+  // Skapa karta som visar Sverige croppat som standard
   radarMap = L.map('radarMap', {
-    center: [63.0, 17.5], // Centrum av Sverige
-    zoom: 5,
+    center: [62.0, 16.0], // Centrum av Sverige
+    zoom: 4,              // Zoom som visar hela Sverige croppat
     minZoom: 4,
     maxZoom: 10,
     zoomControl: true,
@@ -2312,9 +2312,6 @@ function initRadarMap(lat, lon) {
     ],
     maxBoundsViscosity: 1.0
   });
-
-  // Passa kartan till Sverige-täckningen som standard
-  radarMap.fitBounds(radarBounds, { padding: [10, 10] });
 
   // Lägg till mörk bakgrundskarta (CartoDB Dark Matter)
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
