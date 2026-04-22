@@ -398,7 +398,14 @@ async function fetchSMHI(lat, lon) {
   // SMHI kräver lon/lat i URL-path, inte query params
   const url = 'https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/' +
     lon.toFixed(6) + '/lat/' + lat.toFixed(6) + '/data.json';
-  const res = await fetch(url);
+
+  // Retry-logik för tillfälliga fel (503, 502, 504)
+  let res;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(url);
+    if (res.ok || (res.status !== 503 && res.status !== 502 && res.status !== 504)) break;
+    if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+  }
   if (!res.ok) throw new Error('SMHI: HTTP ' + res.status);
   const data = await res.json();
 
@@ -1073,7 +1080,13 @@ async function fetchSMHIRadar() {
     const dayUrl = 'https://opendata-download-radar.smhi.se/api/version/latest/area/sweden/product/comp/' +
       year + '/' + month + '/' + day;
 
-    const res = await fetch(dayUrl);
+    // Retry-logik för tillfälliga fel (503, 502, 504)
+    let res;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      res = await fetch(dayUrl);
+      if (res.ok || (res.status !== 503 && res.status !== 502 && res.status !== 504)) break;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
     if (!res.ok) {
       console.log('SMHI Radar API error:', res.status);
       return null;
