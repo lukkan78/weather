@@ -395,8 +395,8 @@ async function fetchYR(lat, lon) {
 
 // ── API: SMHI ──────────────────────────────────────────────────────────────
 async function fetchSMHI(lat, lon) {
-  // SMHI kräver lon/lat i URL-path, inte query params
-  const url = 'https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/' +
+  // SMHI SNOW1gv1 API (ersatte pmp3g 2026-03-31)
+  const url = 'https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/' +
     lon.toFixed(6) + '/lat/' + lat.toFixed(6) + '/data.json';
 
   // Retry-logik för tillfälliga fel (503, 502, 504)
@@ -409,39 +409,43 @@ async function fetchSMHI(lat, lon) {
   if (!res.ok) throw new Error('SMHI: HTTP ' + res.status);
   const data = await res.json();
 
-  // SMHI returnerar timeSeries array med parameters
+  // SNOW1gv1 returnerar timeSeries med flat data-objekt istället för parameters-array
   const list = data.timeSeries ?? [];
   if (!list.length) throw new Error('SMHI: ingen data');
 
-  // Hjälpfunktion för att extrahera parameter från en tidpunkt
-  const getParam = (params, name) => params.find(p => p.name === name)?.values?.[0] ?? 0;
-
-  // Första tidpunkten för current
-  const params = list[0].parameters ?? [];
-  const c = {
-    t:    getParam(params, 't'),        // temperatur
-    ws:   getParam(params, 'ws'),       // vindhastighet
-    gust: getParam(params, 'gust'),     // byvind
-    wd:   getParam(params, 'wd'),       // vindriktning (grader)
-    r:    getParam(params, 'r'),        // relativ luftfuktighet
-    msl:  getParam(params, 'msl'),      // lufttryck (havsnivå)
-    pmax: getParam(params, 'pmax'),     // max nederbörd
+  // Hjälpfunktion för att hämta värde (9999 = saknas)
+  const getVal = (d, key) => {
+    const v = d?.[key];
+    return (v != null && v !== 9999) ? v : 0;
   };
 
-  // Extrahera timdata (SMHI har ~10 dagars data)
-  const hourly = list.map(entry => {  // Använd all tillgänglig data
-    const p = entry.parameters ?? [];
+  // Första tidpunkten för current
+  const d0 = list[0].data ?? {};
+  const c = {
+    t:    getVal(d0, 'air_temperature'),
+    ws:   getVal(d0, 'wind_speed'),
+    gust: getVal(d0, 'wind_speed_of_gust'),
+    wd:   getVal(d0, 'wind_from_direction'),
+    r:    getVal(d0, 'relative_humidity'),
+    msl:  getVal(d0, 'air_pressure_at_mean_sea_level'),
+    pmax: getVal(d0, 'precipitation_amount_max'),
+    sym:  getVal(d0, 'symbol_code'),
+  };
+
+  // Extrahera timdata
+  const hourly = list.map(entry => {
+    const d = entry.data ?? {};
     return {
-      time:     entry.validTime,
-      temp:     round1(getParam(p, 't')),
-      wind:     round1(getParam(p, 'ws')),
-      windGust: round1(getParam(p, 'gust')),
-      windDir:  degToDir(getParam(p, 'wd')),
-      humidity: Math.round(getParam(p, 'r')),
-      pressure: Math.round(getParam(p, 'msl')),
-      precipMm: round1(getParam(p, 'pmax')),
-      precip:   Math.round(getParam(p, 'pmax') > 0 ? 70 : 10), // Uppskattad sannolikhet
-      icon:     '🌤️',  // SMHI har inte lika bra ikoner
+      time:     entry.time,
+      temp:     round1(getVal(d, 'air_temperature')),
+      wind:     round1(getVal(d, 'wind_speed')),
+      windGust: round1(getVal(d, 'wind_speed_of_gust')),
+      windDir:  degToDir(getVal(d, 'wind_from_direction')),
+      humidity: Math.round(getVal(d, 'relative_humidity')),
+      pressure: Math.round(getVal(d, 'air_pressure_at_mean_sea_level')),
+      precipMm: round1(getVal(d, 'precipitation_amount_max')),
+      precip:   Math.round(getVal(d, 'precipitation_amount_max') > 0 ? 70 : 10),
+      icon:     '🌤️',
     };
   });
 
