@@ -2910,18 +2910,20 @@ function renderHourly(hourly, iconEuEns, oceanForecast) {
     // Visa nederbördsrisk % och mm
     let precipHtml = h.precip + '%';
     if (h.precipMm > 0) {
-      precipHtml += ' · ' + h.precipMm + 'mm';
+      precipHtml += ' ' + h.precipMm + 'mm';
     }
 
-    // Vind med riktning
-    const windHtml = h.wind + ' ' + (h.windDir || '');
+    // Vind med riktning (kompakt)
+    const windHtml = h.wind + (h.windDir ? ' ' + h.windDir : '');
 
     el.innerHTML =
         '<div class="hourly-time">'   + label      + '</div>'
       + '<div class="hourly-icon">'   + h.icon     + '</div>'
       + '<div class="hourly-temp">'   + h.temp     + '°</div>'
-      + '<div class="hourly-wind">💨 ' + windHtml + '</div>'
-      + '<div class="hourly-precip">💧 ' + precipHtml + '</div>';
+      + '<div class="hourly-details">'
+      + '<span>💨' + windHtml + '</span>'
+      + '<span>💧' + precipHtml + '</span>'
+      + '</div>';
 
     // Klicka för källjämförelse
     el.addEventListener('click', () => showHourDetail(h));
