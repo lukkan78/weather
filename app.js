@@ -32,6 +32,10 @@ const dayTitle       = $('dayDetailTitle');
 const daySummary     = $('dayDetailSummary');
 const dayHourly      = $('dayDetailHourly');
 const dayClose       = $('dayDetailClose');
+const hourModal      = $('hourDetailModal');
+const hourTitle      = $('hourDetailTitle');
+const hourBody       = $('hourDetailBody');
+const hourClose      = $('hourDetailClose');
 const recentLoc      = $('recentLocation');
 const recentBtn      = $('recentBtn');
 const sourcesSection = $('sourcesSection');
@@ -116,6 +120,31 @@ const YR_ICO = {
 
 function yrIco(sym) {
   return YR_ICO[sym] || YR_ICO[sym?.replace(/_day$|_night$/, '')] || '🌤️';
+}
+
+// ── Ikonrankning (optimistisk) - lägre = bättre väder ─────────────────────
+const ICON_RANK = {
+  '☀️': 1, '🌙': 1,           // Klart
+  '🌤️': 2,                    // Mestadels klart
+  '⛅': 3,                     // Delvis molnigt
+  '☁️': 4,                     // Molnigt
+  '🌫️': 5,                    // Dimma
+  '🌦️': 6,                    // Lätt regn
+  '🌧️': 7,                    // Regn
+  '🌨️': 8,                    // Snö/slask
+  '❄️': 9,                     // Kraftig snö
+  '⛈️': 10,                    // Åska
+};
+
+function pickBestIcon(icons) {
+  if (!icons?.length) return '🌤️';
+  if (icons.length === 1) return icons[0];
+  // Returnera ikonen med lägst rank (bäst väder)
+  return icons.reduce((best, icon) => {
+    const bestRank = ICON_RANK[best] ?? 5;
+    const iconRank = ICON_RANK[icon] ?? 5;
+    return iconRank < bestRank ? icon : best;
+  }, icons[0]);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1378,7 +1407,11 @@ function calcEnsemble(results) {
       // Normalisera tidsstämpel till timme (ta bort minuter/sekunder)
       const key = h.time.slice(0, 13); // "2024-01-15T14"
       if (!hourlyByTime.has(key)) {
-        hourlyByTime.set(key, { temps: [], winds: [], humids: [], precips: [], precipMms: [], primary: null });
+        hourlyByTime.set(key, {
+          temps: [], winds: [], humids: [], precips: [], precipMms: [],
+          icons: [], descs: [], primary: null,
+          sourceData: []  // Detaljerad data per källa för jämförelse
+        });
       }
       const entry = hourlyByTime.get(key);
       entry.temps.push(h.temp);
@@ -1386,7 +1419,20 @@ function calcEnsemble(results) {
       if (h.humidity != null) entry.humids.push(h.humidity);
       if (h.precip != null) entry.precips.push(h.precip);
       if (h.precipMm != null) entry.precipMms.push(h.precipMm);
-      // Spara primary (Open-Meteo) för icon/desc
+      if (h.icon) entry.icons.push(h.icon);
+      if (h.desc) entry.descs.push(h.desc);
+      // Spara källdata för jämförelsevy
+      entry.sourceData.push({
+        source: r.source,
+        temp: h.temp,
+        icon: h.icon,
+        desc: h.desc,
+        wind: h.wind,
+        precip: h.precip,
+        precipMm: h.precipMm,
+        humidity: h.humidity
+      });
+      // Spara primary (Open-Meteo) för fallback
       if (r.source === 'Open-Meteo' || !entry.primary) {
         entry.primary = h;
       }
@@ -1405,21 +1451,22 @@ function calcEnsemble(results) {
       return {
         time:       p.time,
         temp:       tempArr.length ? round1(avg(tempArr)) : (p.temp ?? 0),
-        tempMin:    tempArr.length ? round1(Math.min(...tempArr)) : null,  // Min från multi-source
-        tempMax:    tempArr.length ? round1(Math.max(...tempArr)) : null,  // Max från multi-source
-        icon:       p.icon,
+        tempMin:    tempArr.length ? round1(Math.min(...tempArr)) : null,
+        tempMax:    tempArr.length ? round1(Math.max(...tempArr)) : null,
+        icon:       pickBestIcon(data.icons),  // Optimistisk ikon (bästa väder bland källor)
         desc:       p.desc,
         precip:     data.precips.length ? Math.round(avg(data.precips)) : (p.precip ?? 0),
         precipMm:   precipArr.length ? round1(avg(precipArr)) : (p.precipMm ?? 0),
-        precipMin:  precipArr.length ? round1(Math.min(...precipArr)) : 0,  // Min från multi-source
-        precipMax:  precipArr.length ? round1(Math.max(...precipArr)) : 0,  // Max från multi-source
+        precipMin:  precipArr.length ? round1(Math.min(...precipArr)) : 0,
+        precipMax:  precipArr.length ? round1(Math.max(...precipArr)) : 0,
         wind:       windArr.length ? round1(avg(windArr)) : (p.wind ?? 0),
-        windMin:    windArr.length ? round1(Math.min(...windArr)) : null,  // Min från multi-source
-        windMax:    windArr.length ? round1(Math.max(...windArr)) : null,  // Max från multi-source
+        windMin:    windArr.length ? round1(Math.min(...windArr)) : null,
+        windMax:    windArr.length ? round1(Math.max(...windArr)) : null,
         windDir:    p.windDir,
         humidity:   data.humids.length ? Math.round(avg(data.humids)) : (p.humidity ?? 0),
-        uv:         p.uv ?? 0,  // UV endast från Open-Meteo
-        sources:    sourceCount,  // Antal källor för denna timme
+        uv:         p.uv ?? 0,
+        sources:    sourceCount,
+        sourceData: data.sourceData,  // Detaljerad data per källa
       };
     });
 
@@ -1449,13 +1496,14 @@ function calcEnsemble(results) {
   ensembleHourly.forEach(h => {
     const date = h.time.slice(0, 10);
     if (!dailyByDate.has(date)) {
-      dailyByDate.set(date, { temps: [], winds: [], precips: [], humids: [], sourceCount: 0 });
+      dailyByDate.set(date, { temps: [], winds: [], precips: [], humids: [], icons: [], sourceCount: 0 });
     }
     const entry = dailyByDate.get(date);
     entry.temps.push(h.temp);
     entry.winds.push(h.wind);
     entry.precips.push(h.precipMm);
     entry.humids.push(h.humidity);
+    if (h.icon) entry.icons.push(h.icon);
     entry.sourceCount = Math.max(entry.sourceCount, h.sources || 1);
   });
 
@@ -1475,12 +1523,15 @@ function calcEnsemble(results) {
 
       // Vikta baserat på antal källor
       const weight = sourceCount > 1 ? 0.5 : 0.3;
+      // Välj optimistisk ikon från dagens timdata
+      const bestIcon = hourlyData.icons.length ? pickBestIcon(hourlyData.icons) : d.icon;
       return {
         ...d,
         tempMin: round1(d.tempMin * (1 - weight) + avgTempMin * weight),
         tempMax: round1(d.tempMax * (1 - weight) + avgTempMax * weight),
         wind:    round1(d.wind * (1 - weight) + avgWind * weight),
         precip:  round1(d.precip * (1 - weight) + totalPrecip * weight),
+        icon:    bestIcon,
         uvMax:   d.uvMax ?? 0,
         sources: sourceCount,
       };
@@ -2850,10 +2901,10 @@ function renderHourly(hourly, iconEuEns, oceanForecast) {
     const ensKey = h.time.slice(0, 13);
     const ens = ensMap.get(ensKey);
 
-    // Visa nederbördsintervall om ensemble finns
+    // Visa nederbördsrisk % och mm
     let precipHtml = h.precip + '%';
-    if (ens?.precip && ens.precip.max > 0) {
-      precipHtml = ens.precip.min + '-' + ens.precip.max + ' mm';
+    if (h.precipMm > 0) {
+      precipHtml += ' · ' + h.precipMm + 'mm';
     }
 
     el.innerHTML =
@@ -2861,6 +2912,9 @@ function renderHourly(hourly, iconEuEns, oceanForecast) {
       + '<div class="hourly-icon">'   + h.icon     + '</div>'
       + '<div class="hourly-temp">'   + h.temp     + '°</div>'
       + '<div class="hourly-precip">💧 ' + precipHtml + '</div>';
+
+    // Klicka för källjämförelse
+    el.addEventListener('click', () => showHourDetail(h));
     hourlyScroll.appendChild(el);
   });
 }
@@ -3083,9 +3137,10 @@ function showDayDetail(index) {
           if (iconEns?.precip?.max != null) precipVals.push(iconEns.precip.max);
           const pMin = precipVals.length ? round1(Math.min(...precipVals)) : 0;
           const pMax = precipVals.length ? round1(Math.max(...precipVals)) : 0;
-          const precipHtml = (pMax > 0 && pMin !== pMax) ? pMin + '-' + pMax + 'mm' : h.precipMm + 'mm';
+          const precipMmHtml = (pMax > 0 && pMin !== pMax) ? pMin + '-' + pMax + 'mm' : (h.precipMm || 0) + 'mm';
+          const precipHtml = h.precip + '% · ' + precipMmHtml;
 
-          return '<div class="day-detail-hour">'
+          return '<div class="day-detail-hour" data-time="' + h.time + '">'
             + '<div class="day-detail-hour-time">' + fmtTime(h.time) + '</div>'
             + '<div class="day-detail-hour-icon">' + h.icon + '</div>'
             + '<div class="day-detail-hour-temp">' + tempHtml + '</div>'
@@ -3094,6 +3149,17 @@ function showDayDetail(index) {
             + '</div>';
         }).join('')
       + '</div>';
+
+    // Lägg till klickhanterare för källjämförelse
+    setTimeout(() => {
+      dayHourly.querySelectorAll('.day-detail-hour').forEach(el => {
+        el.addEventListener('click', () => {
+          const time = el.dataset.time;
+          const hourData = dayHours.find(h => h.time === time);
+          if (hourData) showHourDetail(hourData);
+        });
+      });
+    }, 0);
   } else {
     dayHourly.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center">Ingen timdata tillgänglig</div>';
   }
@@ -3103,6 +3169,53 @@ function showDayDetail(index) {
 
 function hideDayDetail() {
   dayModal.classList.remove('active');
+}
+
+// ── Timdetalj (källjämförelse) ────────────────────────────────────────────
+function showHourDetail(hourData) {
+  if (!hourData) return;
+
+  const time = new Date(hourData.time);
+  const timeStr = time.toLocaleDateString('sv-SE', { weekday: 'short', day: 'numeric', month: 'short' })
+    + ' kl ' + time.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+  hourTitle.textContent = timeStr;
+
+  // Bygg källjämförelse
+  let html = '<div class="hour-source-grid">';
+
+  // Ensemble (huvudresultat)
+  html += '<div class="hour-source-card ensemble">'
+    + '<div class="hour-source-name">Ensemble</div>'
+    + '<div class="hour-source-icon">' + (hourData.icon || '🌤️') + '</div>'
+    + '<div class="hour-source-temp">' + hourData.temp + '°</div>'
+    + '<div class="hour-source-details">'
+    + '💨 ' + hourData.wind + ' m/s<br>'
+    + '💧 ' + hourData.precip + '% · ' + (hourData.precipMm || 0) + 'mm<br>'
+    + '💦 ' + hourData.humidity + '%'
+    + '</div></div>';
+
+  // Individuella källor
+  if (hourData.sourceData?.length) {
+    hourData.sourceData.forEach(src => {
+      html += '<div class="hour-source-card">'
+        + '<div class="hour-source-name">' + src.source + '</div>'
+        + '<div class="hour-source-icon">' + (src.icon || '🌤️') + '</div>'
+        + '<div class="hour-source-temp">' + (src.temp ?? '-') + '°</div>'
+        + '<div class="hour-source-details">'
+        + '💨 ' + (src.wind ?? '-') + ' m/s<br>'
+        + '💧 ' + (src.precip ?? '-') + '% · ' + (src.precipMm ?? 0) + 'mm<br>'
+        + '💦 ' + (src.humidity ?? '-') + '%'
+        + '</div></div>';
+    });
+  }
+
+  html += '</div>';
+  hourBody.innerHTML = html;
+  hourModal.classList.add('active');
+}
+
+function hideHourDetail() {
+  hourModal.classList.remove('active');
 }
 
 // ── Recent Location ────────────────────────────────────────────────────────
@@ -3415,6 +3528,12 @@ document.addEventListener('click', e => {
 dayClose.addEventListener('click', hideDayDetail);
 dayModal.addEventListener('click', e => {
   if (e.target === dayModal) hideDayDetail();
+});
+
+// Hour detail modal
+hourClose.addEventListener('click', hideHourDetail);
+hourModal.addEventListener('click', e => {
+  if (e.target === hourModal) hideHourDetail();
 });
 
 // Recent location event listener
