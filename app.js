@@ -124,27 +124,33 @@ function yrIco(sym) {
 
 // ── Ikonrankning (optimistisk) - lägre = bättre väder ─────────────────────
 const ICON_RANK = {
-  '☀️': 1, '🌙': 1,           // Klart
+  '☀️': 1,                     // Klart (dag)
   '🌤️': 2,                    // Mestadels klart
   '⛅': 3,                     // Delvis molnigt
-  '☁️': 4,                     // Molnigt
-  '🌫️': 5,                    // Dimma
-  '🌦️': 6,                    // Lätt regn
-  '🌧️': 7,                    // Regn
-  '🌨️': 8,                    // Snö/slask
-  '❄️': 9,                     // Kraftig snö
-  '⛈️': 10,                    // Åska
+  '🌙': 4,                     // Klart (natt) - lägre prio för dagsprognos
+  '☁️': 5,                     // Molnigt
+  '🌫️': 6,                    // Dimma
+  '🌦️': 7,                    // Lätt regn
+  '🌧️': 8,                    // Regn
+  '🌨️': 9,                    // Snö/slask
+  '❄️': 10,                    // Kraftig snö
+  '⛈️': 11,                    // Åska
 };
 
-function pickBestIcon(icons) {
+function pickBestIcon(icons, preferDay = true) {
   if (!icons?.length) return '🌤️';
   if (icons.length === 1) return icons[0];
+
+  // Filtrera bort nattikoner om vi föredrar dag (för dagsprognos)
+  const dayIcons = preferDay ? icons.filter(i => i !== '🌙') : icons;
+  const useIcons = dayIcons.length ? dayIcons : icons;
+
   // Returnera ikonen med lägst rank (bäst väder)
-  return icons.reduce((best, icon) => {
-    const bestRank = ICON_RANK[best] ?? 5;
-    const iconRank = ICON_RANK[icon] ?? 5;
+  return useIcons.reduce((best, icon) => {
+    const bestRank = ICON_RANK[best] ?? 6;
+    const iconRank = ICON_RANK[icon] ?? 6;
     return iconRank < bestRank ? icon : best;
-  }, icons[0]);
+  }, useIcons[0]);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1453,7 +1459,7 @@ function calcEnsemble(results) {
         temp:       tempArr.length ? round1(avg(tempArr)) : (p.temp ?? 0),
         tempMin:    tempArr.length ? round1(Math.min(...tempArr)) : null,
         tempMax:    tempArr.length ? round1(Math.max(...tempArr)) : null,
-        icon:       pickBestIcon(data.icons),  // Optimistisk ikon (bästa väder bland källor)
+        icon:       pickBestIcon(data.icons, false),  // Optimistisk ikon, behåll nattikoner för timprognos
         desc:       p.desc,
         precip:     data.precips.length ? Math.round(avg(data.precips)) : (p.precip ?? 0),
         precipMm:   precipArr.length ? round1(avg(precipArr)) : (p.precipMm ?? 0),
