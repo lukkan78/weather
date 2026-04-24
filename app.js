@@ -2913,10 +2913,14 @@ function renderHourly(hourly, iconEuEns, oceanForecast) {
       precipHtml += ' · ' + h.precipMm + 'mm';
     }
 
+    // Vind med riktning
+    const windHtml = h.wind + ' ' + (h.windDir || '');
+
     el.innerHTML =
         '<div class="hourly-time">'   + label      + '</div>'
       + '<div class="hourly-icon">'   + h.icon     + '</div>'
       + '<div class="hourly-temp">'   + h.temp     + '°</div>'
+      + '<div class="hourly-wind">💨 ' + windHtml + '</div>'
       + '<div class="hourly-precip">💧 ' + precipHtml + '</div>';
 
     // Klicka för källjämförelse
