@@ -2450,7 +2450,7 @@ function renderRadar(radarData, lat, lon) {
 
   // Rensa eventuell pågående animation
   if (radarAnimationTimer) {
-    clearInterval(radarAnimationTimer);
+    cancelAnimationFrame(radarAnimationTimer);
     radarAnimationTimer = null;
   }
 
@@ -2536,8 +2536,16 @@ function renderRadar(radarData, lat, lon) {
 
   radarSection.innerHTML = html;
 
+  // Öppna sektionen så kartan får rätt storlek vid initiering
+  radarSection.classList.add('open');
+
   // Initiera Leaflet-karta med RainViewer tiles
   initRadarMapRainViewer(lat, lon, radarData.host);
+
+  // Säkerställ att kartan får rätt storlek efter CSS-transition
+  setTimeout(() => {
+    if (radarMap) radarMap.invalidateSize();
+  }, 100);
 
   // Initiera animation
   initRadarAnimation();
@@ -2591,6 +2599,7 @@ function initRadarMapRainViewer(lat, lon, host) {
     tileLayer.addTo(radarMap);
     radarOverlays.push(tileLayer);
     frame.overlayIndex = i;
+    frame.loaded = true; // Markera som laddad (tiles laddas on-demand av Leaflet)
   });
 
   // Visa aktuell frame
