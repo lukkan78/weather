@@ -2517,7 +2517,6 @@ function initRadarMapRainViewer(lat, lon, host) {
     radarMap.setView([lat, lon], 8, { animate: true });
   });
 }
-}
 
 // Initiera radar-animation med requestAnimationFrame för smidig mobilprestanda
 function initRadarAnimation() {
