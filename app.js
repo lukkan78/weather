@@ -1495,12 +1495,13 @@ function calcEnsemble(results) {
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────
-// ── Analysera nowcast-risk ──────────────────────────────────────────────────
-function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
+// ── Analysera nowcast-risk (kombinerar radar + modelldata) ──────────────────
+function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp, radarData) {
   const now = new Date();
   let precipData = [];
+  let hasRadarNowcast = false;
 
-  // Samla data från YR Nowcast (0-2h)
+  // Samla data från YR Nowcast (0-2h, radar-baserad)
   if (yrNowcast?.data?.length) {
     yrNowcast.data.forEach(d => {
       const t = new Date(d.time);
@@ -1510,14 +1511,15 @@ function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
           time: t,
           minsAhead: Math.round(minsAhead),
           precipRate: d.precipRate || 0,  // mm/h
-          source: 'radar'
+          source: 'yr-radar'
         });
       }
     });
+    hasRadarNowcast = true;
   }
 
-  // Lägg till Open-Meteo för närmaste 2h om YR saknas
-  if (precipData.length < 5 && omMinutely?.data?.length) {
+  // Lägg till Open-Meteo minutely (0-2h)
+  if (omMinutely?.data?.length) {
     omMinutely.data.forEach(d => {
       const t = new Date(d.time);
       const minsAhead = (t - now) / (1000 * 60);
@@ -1526,10 +1528,19 @@ function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
           time: t,
           minsAhead: Math.round(minsAhead),
           precipRate: (d.precipMm || 0) * 4,  // 15-min -> mm/h approximation
-          source: 'model'
+          source: 'om-model'
         });
       }
     });
+  }
+
+  // Kolla om RainViewer har nowcast-frames (radar-prognos)
+  let hasRainViewerNowcast = false;
+  if (radarData?.frames?.length) {
+    const forecastFrames = radarData.frames.filter(f => f.forecast);
+    if (forecastFrames.length > 0) {
+      hasRainViewerNowcast = true;
+    }
   }
 
   if (precipData.length < 2) return null;
@@ -1538,10 +1549,12 @@ function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
   precipData.sort((a, b) => a.minsAhead - b.minsAhead);
 
   // Analysera kommande nederbörd
+  const next15min = precipData.filter(d => d.minsAhead >= 0 && d.minsAhead <= 15);
   const next30min = precipData.filter(d => d.minsAhead >= 0 && d.minsAhead <= 30);
   const next60min = precipData.filter(d => d.minsAhead >= 0 && d.minsAhead <= 60);
   const next120min = precipData.filter(d => d.minsAhead >= 0 && d.minsAhead <= 120);
 
+  const maxRate15 = Math.max(...next15min.map(d => d.precipRate), 0);
   const maxRate30 = Math.max(...next30min.map(d => d.precipRate), 0);
   const maxRate60 = Math.max(...next60min.map(d => d.precipRate), 0);
   const maxRate120 = Math.max(...next120min.map(d => d.precipRate), 0);
@@ -1553,78 +1566,158 @@ function analyzeNowcastRisk(yrNowcast, omMinutely, currentTemp) {
   // Avgör nederbördstyp baserat på temperatur
   const temp = currentTemp ?? 5;
   let precipType = 'regn';
+  let precipTypeIcon = '🌧️';
   if (temp <= -1) {
     precipType = 'snö';
+    precipTypeIcon = '🌨️';
   } else if (temp <= 2) {
     precipType = 'snöblandat regn';
+    precipTypeIcon = '🌨️';
   }
 
-  // Avgör intensitet och risk
-  let risk = null;
-  let icon = '';
-  let text = '';
-  let color = '';
+  // Beräkna varaktighet - hur länge pågår nederbörden
+  function calcDuration(startIdx) {
+    if (startIdx < 0) return null;
+    let endIdx = startIdx;
+    for (let i = startIdx; i < precipData.length; i++) {
+      if (precipData[i].precipRate >= 0.3) {
+        endIdx = i;
+      } else {
+        break;
+      }
+    }
+    const startMins = precipData[startIdx].minsAhead;
+    const endMins = precipData[endIdx].minsAhead;
+    return endMins - startMins;
+  }
 
-  if (maxRate30 >= 10 || maxRate60 >= 15) {
-    // Skyfall/kraftigt
-    risk = 'high';
-    icon = '⛈️';
-    if (precipType === 'snö') {
-      text = 'Risk för ymnigt snöfall';
-    } else {
-      text = 'Risk för skyfall';
-    }
-    color = 'var(--confidence-low)';
-  } else if (maxRate30 >= 4 || maxRate60 >= 6) {
-    // Kraftig nederbörd
-    risk = 'medium';
-    icon = precipType === 'snö' ? '🌨️' : '🌧️';
-    text = 'Kraftig ' + precipType + ' väntas';
-    color = 'var(--confidence-medium)';
-  } else if (maxRate60 >= 1 && precipStartsIn !== null) {
-    // Måttlig nederbörd på väg
-    risk = 'low';
-    icon = precipType === 'snö' ? '🌨️' : '🌧️';
-    if (precipStartsIn <= 10) {
-      text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' inom kort';
-    } else if (precipStartsIn <= 30) {
-      text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' om ~' + precipStartsIn + ' min';
-    } else {
-      text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' inom 1h';
-    }
-    color = 'var(--accent-rain)';
-  } else if (maxRate120 >= 0.5 && precipStartsIn !== null && precipStartsIn > 60) {
-    // Nederbörd längre fram
-    risk = 'info';
-    icon = '🌦️';
-    text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' om ~' + Math.round(precipStartsIn / 10) * 10 + ' min';
-    color = 'var(--text-secondary)';
+  // Intensitetsbeskrivning
+  function intensityText(rate) {
+    if (rate >= 10) return 'kraftigt';
+    if (rate >= 4) return 'måttligt';
+    if (rate >= 1) return 'lätt';
+    return 'mycket lätt';
   }
 
   // Kolla om det regnar nu
   const currentPrecip = precipData.filter(d => d.minsAhead >= -5 && d.minsAhead <= 5);
   const isRainingNow = currentPrecip.some(d => d.precipRate >= 0.5);
+  const currentRate = Math.max(...currentPrecip.map(d => d.precipRate), 0);
 
-  if (isRainingNow && maxRate30 < 4) {
-    // Pågående lätt nederbörd
-    const endTime = precipData.find(d => d.minsAhead > 0 && d.precipRate < 0.2);
-    if (endTime && endTime.minsAhead <= 60) {
+  let risk = null;
+  let icon = '';
+  let text = '';
+  let subtext = '';
+  let color = '';
+
+  if (isRainingNow) {
+    // Det regnar just nu - visa när det slutar
+    const endIdx = precipData.findIndex(d => d.minsAhead > 5 && d.precipRate < 0.2);
+    const endsIn = endIdx >= 0 ? precipData[endIdx].minsAhead : null;
+
+    if (maxRate30 >= 10) {
+      risk = 'high';
+      icon = '⛈️';
+      text = precipType === 'snö' ? 'Ymnigt snöfall pågår' : 'Skyfall pågår';
+      color = 'var(--confidence-low)';
+    } else if (endsIn && endsIn <= 30) {
       risk = 'ending';
       icon = '🌤️';
-      text = 'Uppehåll om ~' + endTime.minsAhead + ' min';
+      text = 'Uppehåll om ~' + endsIn + ' min';
+      subtext = intensityText(currentRate) + ' ' + precipType + ' just nu';
       color = 'var(--confidence-high)';
+    } else if (endsIn && endsIn <= 60) {
+      risk = 'ongoing';
+      icon = precipTypeIcon;
+      const intens = intensityText(currentRate);
+      text = intens.charAt(0).toUpperCase() + intens.slice(1) + ' ' + precipType;
+      subtext = 'slutar om ~' + endsIn + ' min';
+      color = 'var(--accent-rain)';
+    } else {
+      risk = 'ongoing';
+      icon = precipTypeIcon;
+      const intens = intensityText(currentRate);
+      text = intens.charAt(0).toUpperCase() + intens.slice(1) + ' ' + precipType + ' pågår';
+      color = 'var(--accent-rain)';
+    }
+  } else if (precipStartsIn !== null) {
+    // Nederbörd på väg
+    const startIdx = precipData.findIndex(d => d.minsAhead > 0 && d.precipRate >= 0.5);
+    const duration = calcDuration(startIdx);
+    const peakRate = Math.max(maxRate30, maxRate60);
+    const intens = intensityText(peakRate);
+
+    if (maxRate30 >= 10 || maxRate60 >= 15) {
+      risk = 'high';
+      icon = '⛈️';
+      if (precipType === 'snö') {
+        text = 'Ymnigt snöfall om ~' + precipStartsIn + ' min';
+      } else {
+        text = 'Skyfall om ~' + precipStartsIn + ' min';
+      }
+      if (duration && duration > 10) {
+        subtext = 'varar i ~' + duration + ' min';
+      }
+      color = 'var(--confidence-low)';
+    } else if (maxRate30 >= 4 || maxRate60 >= 6) {
+      risk = 'medium';
+      icon = precipTypeIcon;
+      text = 'Kraftigt ' + precipType + ' om ~' + precipStartsIn + ' min';
+      if (duration && duration > 10) {
+        subtext = 'varar i ~' + duration + ' min';
+      }
+      color = 'var(--confidence-medium)';
+    } else if (precipStartsIn <= 15 && maxRate15 >= 0.5) {
+      risk = 'imminent';
+      icon = precipTypeIcon;
+      const capType = precipType.charAt(0).toUpperCase() + precipType.slice(1);
+      text = capType + ' inom kort';
+      if (duration && duration >= 15) {
+        subtext = intens + ', varar i ~' + duration + ' min';
+      } else {
+        subtext = intens + ' ' + precipType;
+      }
+      color = 'var(--accent-rain)';
+    } else if (precipStartsIn <= 30) {
+      risk = 'low';
+      icon = precipTypeIcon;
+      const capType = precipType.charAt(0).toUpperCase() + precipType.slice(1);
+      text = capType + ' om ~' + precipStartsIn + ' min';
+      if (duration && duration >= 15) {
+        subtext = intens + ', varar i ~' + duration + ' min';
+      }
+      color = 'var(--accent-rain)';
+    } else if (precipStartsIn <= 60) {
+      risk = 'info';
+      icon = '🌦️';
+      text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' om ~' + Math.round(precipStartsIn / 5) * 5 + ' min';
+      color = 'var(--text-secondary)';
+    } else if (maxRate120 >= 0.5) {
+      risk = 'info';
+      icon = '🌦️';
+      text = precipType.charAt(0).toUpperCase() + precipType.slice(1) + ' om ~' + Math.round(precipStartsIn / 10) * 10 + ' min';
+      color = 'var(--text-secondary)';
     }
   }
 
   if (!risk) return null;
 
+  // Bestäm datakälla-indikator
+  const hasRadar = hasRadarNowcast || hasRainViewerNowcast;
+  let sourceIndicator = hasRadar ? '📡' : '🔮';
+
   return {
     risk,
     icon,
     text,
+    subtext,
     color,
-    hasRadar: precipData.some(d => d.source === 'radar'),
-    maxRate: Math.max(maxRate30, maxRate60)
+    hasRadar,
+    hasRainViewerNowcast,
+    sourceIndicator,
+    maxRate: Math.max(maxRate30, maxRate60),
+    isRainingNow,
+    precipStartsIn
   };
 }
 
@@ -1643,9 +1736,13 @@ function renderCurrent(ens, iconEuEns, nowcastRisk, oceanForecast) {
   }
 
   if (nowcastRisk) {
-    riskEl.innerHTML = '<span class="risk-icon">' + nowcastRisk.icon + '</span>' +
-      '<span class="risk-text" style="color:' + nowcastRisk.color + '">' + nowcastRisk.text + '</span>' +
-      (nowcastRisk.hasRadar ? '<span class="risk-source">📡</span>' : '');
+    let riskHtml = '<span class="risk-icon">' + nowcastRisk.icon + '</span>' +
+      '<span class="risk-text" style="color:' + nowcastRisk.color + '">' + nowcastRisk.text + '</span>';
+    if (nowcastRisk.subtext) {
+      riskHtml += '<span class="risk-subtext">' + nowcastRisk.subtext + '</span>';
+    }
+    riskHtml += '<span class="risk-source">' + nowcastRisk.sourceIndicator + '</span>';
+    riskEl.innerHTML = riskHtml;
     riskEl.style.display = 'flex';
   } else {
     riskEl.style.display = 'none';
@@ -2517,7 +2614,6 @@ function initRadarMapRainViewer(lat, lon, host) {
     radarMap.setView([lat, lon], 8, { animate: true });
   });
 }
-}
 
 // Initiera radar-animation med requestAnimationFrame för smidig mobilprestanda
 function initRadarAnimation() {
@@ -3120,8 +3216,8 @@ async function fetchWeather(lat, lon, name) {
 
     cachedResults = results;  // Spara för jämförelse-modal
 
-    // Analysera nowcast-risk för "just nu"-visning
-    const nowcastRisk = analyzeNowcastRisk(yrNowcast, omMinutely, ens.current.temp);
+    // Analysera nowcast-risk för "just nu"-visning (kombinerar radar + modelldata)
+    const nowcastRisk = analyzeNowcastRisk(yrNowcast, omMinutely, ens.current.temp, radarData);
 
     renderCurrent(ens, iconEuEns, nowcastRisk, oceanForecast);
     renderSources(results, oceanForecast);
@@ -3172,8 +3268,8 @@ function loadCache() {
     locationName.textContent   = c.loc.name;
     locationCoords.textContent = c.loc.lat.toFixed(4) + '°, ' + c.loc.lon.toFixed(4) + '°';
 
-    // Analysera nowcast-risk från cachad data
-    const nowcastRisk = analyzeNowcastRisk(c.yrNowcast, c.omMinutely, c.ens?.current?.temp);
+    // Analysera nowcast-risk från cachad data (inkl. radar)
+    const nowcastRisk = analyzeNowcastRisk(c.yrNowcast, c.omMinutely, c.ens?.current?.temp, c.radarData);
 
     renderCurrent(c.ens, c.iconEuEns, nowcastRisk, c.oceanForecast);
     renderSources(c.results, c.oceanForecast);
