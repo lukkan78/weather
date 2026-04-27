@@ -3396,8 +3396,14 @@ if (updateBanner) {
 }
 
 // ── Event Listeners ────────────────────────────────────────────────────────
-searchBtn.addEventListener('click', handleSearch);
-geolocateBtn.addEventListener('click', handleGeolocate);
+searchBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  handleSearch();
+});
+geolocateBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  handleGeolocate();
+});
 
 // Autocomplete event listeners
 searchInput.addEventListener('input', e => {
