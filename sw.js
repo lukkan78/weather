@@ -1,5 +1,5 @@
-const CACHE     = 'väder-v22';
-const CACHE_API = 'väder-v22-api';
+const CACHE     = 'väder-v23';
+const CACHE_API = 'väder-v23-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
