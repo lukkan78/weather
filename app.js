@@ -3332,16 +3332,22 @@ window.addEventListener('beforeinstallprompt', e => {
   installPrompt.classList.add('active');
 });
 
-installAccept.addEventListener('click', async () => {
-  installPrompt.classList.remove('active');
-  if (deferredPrompt) {
-    deferredPrompt.prompt();
-    await deferredPrompt.userChoice;
-    deferredPrompt = null;
-  }
-});
+if (installAccept) {
+  installAccept.addEventListener('click', async () => {
+    if (installPrompt) installPrompt.classList.remove('active');
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+    }
+  });
+}
 
-installDismiss.addEventListener('click', () => installPrompt.classList.remove('active'));
+if (installDismiss) {
+  installDismiss.addEventListener('click', () => {
+    if (installPrompt) installPrompt.classList.remove('active');
+  });
+}
 
 // ── Online / Offline ───────────────────────────────────────────────────────
 window.addEventListener('online',  () => {
@@ -3400,27 +3406,33 @@ if (updateBanner) {
 }
 
 // ── Event Listeners ────────────────────────────────────────────────────────
-searchBtn.addEventListener('click', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  handleSearch();
-}, { passive: false });
+if (searchBtn) {
+  searchBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleSearch();
+  }, { passive: false });
+}
 
-geolocateBtn.addEventListener('click', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  handleGeolocate();
-}, { passive: false });
+if (geolocateBtn) {
+  geolocateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleGeolocate();
+  }, { passive: false });
+}
 
 // Autocomplete event listeners
-searchInput.addEventListener('input', e => {
-  const val = e.target.value.trim();
-  debouncedFetch(val);
-  // Visa/dölj rensa-knappen
-  if (searchClear) {
-    searchClear.style.display = val.length > 0 ? 'block' : 'none';
-  }
-});
+if (searchInput) {
+  searchInput.addEventListener('input', e => {
+    const val = e.target.value.trim();
+    debouncedFetch(val);
+    // Visa/dölj rensa-knappen
+    if (searchClear) {
+      searchClear.style.display = val.length > 0 ? 'block' : 'none';
+    }
+  });
+}
 
 // Rensa sökfältet
 if (searchClear) {
@@ -3432,58 +3444,64 @@ if (searchClear) {
   });
 }
 
-searchInput.addEventListener('keydown', e => {
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    selectedSuggest = Math.min(selectedSuggest + 1, suggestions.length - 1);
-    renderSuggestions();
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    selectedSuggest = Math.max(selectedSuggest - 1, -1);
-    renderSuggestions();
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    if (selectedSuggest >= 0) {
-      selectSuggestion(selectedSuggest);
-    } else {
+if (searchInput) {
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedSuggest = Math.min(selectedSuggest + 1, suggestions.length - 1);
+      renderSuggestions();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedSuggest = Math.max(selectedSuggest - 1, -1);
+      renderSuggestions();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (selectedSuggest >= 0) {
+        selectSuggestion(selectedSuggest);
+      } else {
+        hideSuggestions();
+        handleSearch();
+      }
+    } else if (e.key === 'Escape') {
       hideSuggestions();
-      handleSearch();
     }
-  } else if (e.key === 'Escape') {
-    hideSuggestions();
-  }
-});
+  });
+}
 
-searchSuggest.addEventListener('click', e => {
-  const item = e.target.closest('.suggestion-item');
-  if (item) selectSuggestion(Number(item.dataset.index));
-});
+if (searchSuggest) {
+  searchSuggest.addEventListener('click', e => {
+    const item = e.target.closest('.suggestion-item');
+    if (item) selectSuggestion(Number(item.dataset.index));
+  });
+}
 
 document.addEventListener('click', e => {
-  if (!searchInput.contains(e.target) && !searchSuggest.contains(e.target)) {
+  if (searchInput && searchSuggest && !searchInput.contains(e.target) && !searchSuggest.contains(e.target)) {
     hideSuggestions();
   }
 });
 
 // Day detail modal event listeners
-dayClose.addEventListener('click', hideDayDetail);
-dayModal.addEventListener('click', e => {
+if (dayClose) dayClose.addEventListener('click', hideDayDetail);
+if (dayModal) dayModal.addEventListener('click', e => {
   if (e.target === dayModal) hideDayDetail();
 });
 
 // Hour detail modal
-hourClose.addEventListener('click', hideHourDetail);
-hourModal.addEventListener('click', e => {
+if (hourClose) hourClose.addEventListener('click', hideHourDetail);
+if (hourModal) hourModal.addEventListener('click', e => {
   if (e.target === hourModal) hideHourDetail();
 });
 
 // Recent location event listener
-recentBtn.addEventListener('click', loadRecentLocation);
+if (recentBtn) recentBtn.addEventListener('click', loadRecentLocation);
 
 // Sources section toggle (collapsible)
-sourcesToggle.addEventListener('click', () => {
-  sourcesSection.classList.toggle('open');
-});
+if (sourcesToggle && sourcesSection) {
+  sourcesToggle.addEventListener('click', () => {
+    sourcesSection.classList.toggle('open');
+  });
+}
 
 // Refresh button
 if (refreshBtn) {
