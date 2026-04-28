@@ -1,5 +1,5 @@
-const CACHE     = 'väder-v25';
-const CACHE_API = 'väder-v25-api';
+const CACHE     = 'väder-v27';
+const CACHE_API = 'väder-v27-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
@@ -27,6 +27,12 @@ self.addEventListener('activate', e => {
 // ── Fetch ──────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+
+  // Nödreset: Om ?reset finns i URL, skippa cache och hämta från nätverk
+  if (url.search.includes('reset')) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
 
   // Same-origin static assets → cache-first
   if (url.origin === self.location.origin) {
