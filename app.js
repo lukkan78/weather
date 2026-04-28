@@ -1,5 +1,21 @@
 'use strict';
 
+// ── CRASH REPORTER - Visar fel på skärmen ─────────────────────────────────
+window.onerror = function(msg, url, line, col, error) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:20px;z-index:99999;font-family:monospace;font-size:14px;white-space:pre-wrap;';
+  el.textContent = 'JAVASCRIPT FEL:\n' + msg + '\n\nFil: ' + url + '\nRad: ' + line + ', Kolumn: ' + col + '\n\n' + (error ? error.stack : '');
+  document.body.appendChild(el);
+  return false;
+};
+
+window.addEventListener('unhandledrejection', function(e) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:orange;color:black;padding:20px;z-index:99999;font-family:monospace;font-size:14px;white-space:pre-wrap;';
+  el.textContent = 'PROMISE FEL:\n' + (e.reason ? (e.reason.message || e.reason) : 'Okänt fel');
+  document.body.appendChild(el);
+});
+
 // ── Nödreset av Service Worker via URL-parameter ─────────────────────────
 // Besök sidan med ?reset för att tvinga bort gammal SW
 (function() {
