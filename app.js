@@ -3361,23 +3361,45 @@ window.addEventListener('offline', () => {
 
 // ── Service Worker Registration + Update Notification ──────────────────────
 let newWorker = null;
-let userClickedUpdate = false; // Endast true när användaren klickar på uppdatera
+let userClickedUpdate = false;
 
+// Temporärt: Avregistrera alla gamla service workers för att fixa cache-problem
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(reg => {
-    // Kolla efter uppdateringar var 5:e minut (inte direkt vid start)
-    setInterval(() => reg.update(), 5 * 60 * 1000);
+  navigator.serviceWorker.getRegistrations().then(registrations => {
+    // Om vi har gamla SW, avregistrera dem
+    if (registrations.length > 0) {
+      const currentSWVersion = 'v25';
+      const needsReset = !localStorage.getItem('sw-reset-' + currentSWVersion);
 
-    reg.addEventListener('updatefound', () => {
-      newWorker = reg.installing;
-      newWorker.addEventListener('statechange', () => {
-        // Visa uppdatera-banner endast om det finns en aktiv controller (dvs inte första installationen)
-        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          if (updateBanner) updateBanner.classList.add('active');
+      if (needsReset) {
+        console.log('Rensar gamla service workers...');
+        registrations.forEach(reg => reg.unregister());
+        caches.keys().then(keys => {
+          keys.forEach(key => caches.delete(key));
+        });
+        localStorage.setItem('sw-reset-' + currentSWVersion, 'done');
+        // Ladda om efter rensning
+        setTimeout(() => window.location.reload(), 100);
+        return;
+      }
+    }
+
+    // Registrera ny service worker
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      setInterval(() => reg.update(), 5 * 60 * 1000);
+
+      reg.addEventListener('updatefound', () => {
+        newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              if (updateBanner) updateBanner.classList.add('active');
+            }
+          });
         }
       });
-    });
-  }).catch(() => {});
+    }).catch(err => console.log('SW registration failed:', err));
+  });
 
   // Ladda om sidan ENDAST när användaren explicit klickade på uppdatera
   navigator.serviceWorker.addEventListener('controllerchange', () => {
