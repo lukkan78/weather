@@ -1,5 +1,5 @@
-const CACHE     = 'väder-v23';
-const CACHE_API = 'väder-v23-api';
+const CACHE     = 'väder-v24';
+const CACHE_API = 'väder-v24-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
@@ -21,7 +21,7 @@ self.addEventListener('activate', e => {
       )
     )
   );
-  self.clients.claim();
+  // Borttagen: self.clients.claim() - orsakade reload-loop på iOS Safari
 });
 
 // ── Fetch ──────────────────────────────────────────────────────────────────
