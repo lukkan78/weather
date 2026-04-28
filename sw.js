@@ -1,10 +1,11 @@
-const CACHE     = 'väder-v29';
-const CACHE_API = 'väder-v29-api';
+const CACHE     = 'väder-v30';
+const CACHE_API = 'väder-v30-api';
 const STATIC    = ['.', './index.html', './app.js', './sw.js', './manifest.json', './icons/icon.svg'];
 
 // ── Install – pre-cache static shell ──────────────────────────────────────
 self.addEventListener('install', e => {
-  // Vänta på att användaren klickar "Uppdatera" innan skipWaiting
+  // Ta över direkt utan att vänta
+  self.skipWaiting();
   e.waitUntil(
     caches.open(CACHE).then(c => c.addAll(STATIC))
   );
@@ -21,7 +22,6 @@ self.addEventListener('activate', e => {
       )
     )
   );
-  // Borttagen: self.clients.claim() - orsakade reload-loop på iOS Safari
 });
 
 // ── Fetch ──────────────────────────────────────────────────────────────────
