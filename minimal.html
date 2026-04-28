@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Väder - Minimal Test</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: white; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px 5px; background: linear-gradient(135deg,#667eea,#764ba2); border: none; color: white; border-radius: 12px; }
+        input { padding: 15px; font-size: 16px; width: 100%; margin: 10px 0; border-radius: 12px; border: none; }
+        .result { background: #2a2a4e; padding: 20px; border-radius: 12px; margin: 15px 0; }
+        .error { color: #f88; }
+        .temp { font-size: 4rem; }
+    </style>
+</head>
+<body>
+    <h1>🌤️ Väder</h1>
+
+    <button id="geoBtn">📍 Mitt väder</button>
+
+    <div style="margin: 20px 0;">
+        <input type="text" id="search" placeholder="Sök plats...">
+        <button id="searchBtn">Sök</button>
+    </div>
+
+    <div id="result"></div>
+    <div id="log" style="font-size: 12px; color: #888; margin-top: 30px;"></div>
+
+    <script>
+        // Ingen service worker!
+        // Avregistrera eventuella gamla
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(r) { r.unregister(); });
+                log('SW avregistrerade: ' + regs.length);
+            });
+        }
+
+        function log(msg) {
+            var d = document.getElementById('log');
+            d.innerHTML = new Date().toLocaleTimeString() + ': ' + msg + '<br>' + d.innerHTML;
+        }
+
+        function showResult(html) {
+            document.getElementById('result').innerHTML = html;
+        }
+
+        function showError(msg) {
+            showResult('<div class="error">❌ ' + msg + '</div>');
+        }
+
+        async function getWeather(lat, lon, name) {
+            log('Hämtar väder för ' + lat.toFixed(2) + ', ' + lon.toFixed(2));
+            try {
+                var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true&hourly=temperature_2m,weathercode&timezone=Europe/Stockholm';
+                var res = await fetch(url);
+                var data = await res.json();
+                var cw = data.current_weather;
+
+                var icons = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',51:'🌧️',61:'🌧️',71:'🌨️',80:'🌦️',95:'⛈️'};
+                var icon = icons[cw.weathercode] || '🌤️';
+
+                showResult(
+                    '<div class="result">' +
+                    '<h2>' + (name || 'Position') + '</h2>' +
+                    '<div class="temp">' + icon + ' ' + Math.round(cw.temperature) + '°</div>' +
+                    '<p>Vind: ' + cw.windspeed + ' km/h</p>' +
+                    '</div>'
+                );
+                log('Väder OK: ' + cw.temperature + '°C');
+            } catch(e) {
+                showError('Kunde inte hämta väder: ' + e.message);
+                log('Fel: ' + e.message);
+            }
+        }
+
+        document.getElementById('geoBtn').addEventListener('click', function() {
+            log('Geolocation startar...');
+            if (!navigator.geolocation) {
+                showError('Geolocation stöds inte');
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    log('Position OK');
+                    getWeather(pos.coords.latitude, pos.coords.longitude, 'Min position');
+                },
+                function(err) {
+                    showError('Platsbestämning misslyckades: ' + err.message);
+                    log('Geo fel: ' + err.message);
+                }
+            );
+        });
+
+        document.getElementById('searchBtn').addEventListener('click', async function() {
+            var q = document.getElementById('search').value.trim();
+            if (!q) return;
+            log('Söker: ' + q);
+            try {
+                var res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(q) + '&count=1&language=sv');
+                var data = await res.json();
+                if (data.results && data.results.length > 0) {
+                    var r = data.results[0];
+                    getWeather(r.latitude, r.longitude, r.name);
+                } else {
+                    showError('Hittade ingen plats');
+                }
+            } catch(e) {
+                showError('Sökfel: ' + e.message);
+            }
+        });
+
+        log('Sidan laddad - ingen SW');
+    </script>
+</body>
+</html>
