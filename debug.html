@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Weather App</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: white; }
+        .log { background: #333; padding: 8px; margin: 3px 0; border-radius: 5px; font-family: monospace; font-size: 11px; }
+        .error { background: #c44; }
+        .success { background: #4a4; }
+        .warn { background: #a80; }
+        #log { max-height: 60vh; overflow-y: auto; }
+        button { padding: 12px 20px; font-size: 16px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h2>Debug Weather App</h2>
+    <div id="log"></div>
+    <br>
+    <button onclick="loadStep1()">1. Ladda DOM</button>
+    <button onclick="loadStep2()">2. Ladda API</button>
+    <button onclick="loadStep3()">3. Ladda Events</button>
+    <button onclick="loadStep4()">4. Kör Geolocation</button>
+
+    <script>
+        var logs = [];
+        function log(msg, type) {
+            var div = document.createElement('div');
+            div.className = 'log ' + (type || 'success');
+            div.textContent = new Date().toLocaleTimeString() + ': ' + msg;
+            document.getElementById('log').insertBefore(div, document.getElementById('log').firstChild);
+            console.log(msg);
+        }
+
+        window.onerror = function(msg, url, line, col, error) {
+            log('ERROR: ' + msg + ' (rad ' + line + ')', 'error');
+            return false;
+        };
+
+        window.addEventListener('unhandledrejection', function(e) {
+            log('PROMISE ERROR: ' + (e.reason ? e.reason.message || e.reason : 'unknown'), 'error');
+        });
+
+        log('Sidan laddad - iOS ' + (navigator.userAgent.match(/OS (\d+)_/) || [,'?'])[1]);
+
+        // Step 1: Test DOM access
+        function loadStep1() {
+            log('--- STEG 1: DOM ---', 'warn');
+            try {
+                var elements = [
+                    'searchInput', 'searchBtn', 'geolocateBtn', 'errorMessage',
+                    'weatherDisplay', 'loadingOverlay', 'locationName'
+                ];
+                elements.forEach(function(id) {
+                    var el = document.getElementById(id);
+                    log(id + ': ' + (el ? 'saknas i denna HTML' : 'saknas'));
+                });
+                log('DOM test klar - inga element finns (förväntat)', 'success');
+            } catch(e) {
+                log('DOM ERROR: ' + e.message, 'error');
+            }
+        }
+
+        // Step 2: Test API fetch
+        function loadStep2() {
+            log('--- STEG 2: API ---', 'warn');
+            fetch('https://api.open-meteo.com/v1/forecast?latitude=58.23&longitude=11.68&current_weather=true')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    log('Open-Meteo OK: ' + data.current_weather.temperature + '°C', 'success');
+                })
+                .catch(function(e) { log('Open-Meteo ERROR: ' + e.message, 'error'); });
+
+            fetch('https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/11.68/lat/58.23/data.json')
+                .then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(function(data) {
+                    log('SMHI OK: ' + data.timeSeries.length + ' timmar', 'success');
+                })
+                .catch(function(e) { log('SMHI ERROR: ' + e.message, 'error'); });
+        }
+
+        // Step 3: Test event listeners
+        function loadStep3() {
+            log('--- STEG 3: EVENTS ---', 'warn');
+            try {
+                var btn = document.createElement('button');
+                btn.textContent = 'Test Event';
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    log('Event listener fungerar!', 'success');
+                }, { passive: false });
+                document.body.appendChild(btn);
+                log('Event listener skapad OK', 'success');
+            } catch(e) {
+                log('EVENT ERROR: ' + e.message, 'error');
+            }
+        }
+
+        // Step 4: Test geolocation + weather
+        function loadStep4() {
+            log('--- STEG 4: GEOLOCATION + WEATHER ---', 'warn');
+            if (!navigator.geolocation) {
+                log('Geolocation stöds inte', 'error');
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    var lat = pos.coords.latitude;
+                    var lon = pos.coords.longitude;
+                    log('Position: ' + lat.toFixed(2) + ', ' + lon.toFixed(2), 'success');
+
+                    // Fetch weather for this position
+                    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true';
+                    fetch(url)
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            log('Väder: ' + data.current_weather.temperature + '°C, vind ' + data.current_weather.windspeed + ' km/h', 'success');
+                        })
+                        .catch(function(e) { log('Väder ERROR: ' + e.message, 'error'); });
+                },
+                function(err) {
+                    log('Geo ERROR: ' + err.message, 'error');
+                }
+            );
+        }
+    </script>
+</body>
+</html>
