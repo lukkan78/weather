@@ -2,14 +2,27 @@
 
 // ── Nödreset av Service Worker via URL-parameter ─────────────────────────
 // Besök sidan med ?reset för att tvinga bort gammal SW
-if (window.location.search.includes('reset') && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => {
-    regs.forEach(r => r.unregister());
-    caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
-    localStorage.clear();
-    window.location.href = window.location.pathname; // Ta bort ?reset
-  });
-}
+(function() {
+  if (window.location.search.includes('reset') && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+      for (var i = 0; i < regs.length; i++) {
+        regs[i].unregister();
+      }
+    });
+    if (window.caches) {
+      caches.keys().then(function(keys) {
+        for (var i = 0; i < keys.length; i++) {
+          caches.delete(keys[i]);
+        }
+      });
+    }
+    try { localStorage.clear(); } catch(e) {}
+    // Redirect utan ?reset efter kort delay
+    setTimeout(function() {
+      window.location.href = window.location.pathname;
+    }, 500);
+  }
+})();
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const $              = id => document.getElementById(id);
@@ -3370,50 +3383,32 @@ window.addEventListener('offline', () => {
   loadCache();
 });
 
-// ── Service Worker Registration + Update Notification ──────────────────────
-let newWorker = null;
-let userClickedUpdate = false;
+// ── Service Worker Registration (förenklad) ────────────────────────────────
+var newWorker = null;
+var userClickedUpdate = false;
 
-// Temporärt: Avregistrera alla gamla service workers för att fixa cache-problem
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(registrations => {
-    // Om vi har gamla SW, avregistrera dem
-    if (registrations.length > 0) {
-      const currentSWVersion = 'v25';
-      const needsReset = !localStorage.getItem('sw-reset-' + currentSWVersion);
+  // Enkel registrering utan auto-reset
+  navigator.serviceWorker.register('./sw.js').then(function(reg) {
+    // Kolla efter uppdateringar var 5:e minut
+    setInterval(function() { reg.update(); }, 5 * 60 * 1000);
 
-      if (needsReset) {
-        console.log('Rensar gamla service workers...');
-        registrations.forEach(reg => reg.unregister());
-        caches.keys().then(keys => {
-          keys.forEach(key => caches.delete(key));
+    reg.addEventListener('updatefound', function() {
+      newWorker = reg.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', function() {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            if (updateBanner) updateBanner.classList.add('active');
+          }
         });
-        localStorage.setItem('sw-reset-' + currentSWVersion, 'done');
-        // Ladda om efter rensning
-        setTimeout(() => window.location.reload(), 100);
-        return;
       }
-    }
-
-    // Registrera ny service worker
-    navigator.serviceWorker.register('./sw.js').then(reg => {
-      setInterval(() => reg.update(), 5 * 60 * 1000);
-
-      reg.addEventListener('updatefound', () => {
-        newWorker = reg.installing;
-        if (newWorker) {
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              if (updateBanner) updateBanner.classList.add('active');
-            }
-          });
-        }
-      });
-    }).catch(err => console.log('SW registration failed:', err));
+    });
+  }).catch(function(err) {
+    console.log('SW registration failed:', err);
   });
 
-  // Ladda om sidan ENDAST när användaren explicit klickade på uppdatera
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
+  // Ladda om sidan ENDAST när användaren explicit klickat på uppdatera
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
     if (userClickedUpdate) {
       window.location.reload();
     }
@@ -3422,7 +3417,7 @@ if ('serviceWorker' in navigator) {
 
 // Uppdatera-knappen
 if (updateBtn) {
-  updateBtn.addEventListener('click', () => {
+  updateBtn.addEventListener('click', function() {
     if (newWorker) {
       userClickedUpdate = true;
       newWorker.postMessage({ type: 'SKIP_WAITING' });
@@ -3430,7 +3425,7 @@ if (updateBtn) {
   });
 }
 if (updateBanner) {
-  updateBanner.addEventListener('click', e => {
+  updateBanner.addEventListener('click', function(e) {
     if (e.target !== updateBtn && newWorker) {
       userClickedUpdate = true;
       newWorker.postMessage({ type: 'SKIP_WAITING' });
