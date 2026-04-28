@@ -3355,6 +3355,7 @@ window.addEventListener('offline', () => {
 
 // ── Service Worker Registration + Update Notification ──────────────────────
 let newWorker = null;
+let isRefreshing = false; // Förhindra dubbel reload
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').then(reg => {
@@ -3373,9 +3374,14 @@ if ('serviceWorker' in navigator) {
     });
   }).catch(() => {});
 
-  // Ladda om sidan när ny SW tar över
+  // Ladda om sidan när ny SW tar över (endast vid explicit uppdatering)
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    window.location.reload();
+    if (isRefreshing) return;
+    // Endast ladda om ifall användaren klickade på uppdatera-knappen
+    if (newWorker) {
+      isRefreshing = true;
+      window.location.reload();
+    }
   });
 }
 
@@ -3398,12 +3404,15 @@ if (updateBanner) {
 // ── Event Listeners ────────────────────────────────────────────────────────
 searchBtn.addEventListener('click', (e) => {
   e.preventDefault();
+  e.stopPropagation();
   handleSearch();
-});
+}, { passive: false });
+
 geolocateBtn.addEventListener('click', (e) => {
   e.preventDefault();
+  e.stopPropagation();
   handleGeolocate();
-});
+}, { passive: false });
 
 // Autocomplete event listeners
 searchInput.addEventListener('input', e => {
