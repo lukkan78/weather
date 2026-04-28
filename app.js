@@ -1,5 +1,16 @@
 'use strict';
 
+// ── Nödreset av Service Worker via URL-parameter ─────────────────────────
+// Besök sidan med ?reset för att tvinga bort gammal SW
+if (window.location.search.includes('reset') && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(r => r.unregister());
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+    localStorage.clear();
+    window.location.href = window.location.pathname; // Ta bort ?reset
+  });
+}
+
 // ── DOM ────────────────────────────────────────────────────────────────────
 const $              = id => document.getElementById(id);
 const searchInput    = $('searchInput');
