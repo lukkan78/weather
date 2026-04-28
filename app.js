@@ -3355,31 +3355,27 @@ window.addEventListener('offline', () => {
 
 // ── Service Worker Registration + Update Notification ──────────────────────
 let newWorker = null;
-let isRefreshing = false; // Förhindra dubbel reload
+let userClickedUpdate = false; // Endast true när användaren klickar på uppdatera
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').then(reg => {
-    // Kolla efter uppdateringar direkt och sedan var 5:e minut
-    reg.update();
+    // Kolla efter uppdateringar var 5:e minut (inte direkt vid start)
     setInterval(() => reg.update(), 5 * 60 * 1000);
 
     reg.addEventListener('updatefound', () => {
       newWorker = reg.installing;
       newWorker.addEventListener('statechange', () => {
+        // Visa uppdatera-banner endast om det finns en aktiv controller (dvs inte första installationen)
         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          // Ny version finns tillgänglig
           if (updateBanner) updateBanner.classList.add('active');
         }
       });
     });
   }).catch(() => {});
 
-  // Ladda om sidan när ny SW tar över (endast vid explicit uppdatering)
+  // Ladda om sidan ENDAST när användaren explicit klickade på uppdatera
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (isRefreshing) return;
-    // Endast ladda om ifall användaren klickade på uppdatera-knappen
-    if (newWorker) {
-      isRefreshing = true;
+    if (userClickedUpdate) {
       window.location.reload();
     }
   });
@@ -3389,6 +3385,7 @@ if ('serviceWorker' in navigator) {
 if (updateBtn) {
   updateBtn.addEventListener('click', () => {
     if (newWorker) {
+      userClickedUpdate = true;
       newWorker.postMessage({ type: 'SKIP_WAITING' });
     }
   });
@@ -3396,6 +3393,7 @@ if (updateBtn) {
 if (updateBanner) {
   updateBanner.addEventListener('click', e => {
     if (e.target !== updateBtn && newWorker) {
+      userClickedUpdate = true;
       newWorker.postMessage({ type: 'SKIP_WAITING' });
     }
   });
