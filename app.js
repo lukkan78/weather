@@ -3399,55 +3399,19 @@ window.addEventListener('offline', () => {
   loadCache();
 });
 
-// ── Service Worker Registration (förenklad) ────────────────────────────────
-var newWorker = null;
-var userClickedUpdate = false;
-
+// ── Service Worker AVSTÄNGD för debugging ───────────────────────────────
+// Avregistrera alla gamla SW först
 if ('serviceWorker' in navigator) {
-  // Enkel registrering utan auto-reset
-  navigator.serviceWorker.register('./sw.js').then(function(reg) {
-    // Kolla efter uppdateringar var 5:e minut
-    setInterval(function() { reg.update(); }, 5 * 60 * 1000);
-
-    reg.addEventListener('updatefound', function() {
-      newWorker = reg.installing;
-      if (newWorker) {
-        newWorker.addEventListener('statechange', function() {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            if (updateBanner) updateBanner.classList.add('active');
-          }
-        });
-      }
-    });
-  }).catch(function(err) {
-    console.log('SW registration failed:', err);
-  });
-
-  // Ladda om sidan ENDAST när användaren explicit klickat på uppdatera
-  navigator.serviceWorker.addEventListener('controllerchange', function() {
-    if (userClickedUpdate) {
-      window.location.reload();
+  navigator.serviceWorker.getRegistrations().then(function(regs) {
+    for (var i = 0; i < regs.length; i++) {
+      regs[i].unregister();
+    }
+    if (regs.length > 0) {
+      console.log('Avregistrerade ' + regs.length + ' service workers');
     }
   });
 }
-
-// Uppdatera-knappen
-if (updateBtn) {
-  updateBtn.addEventListener('click', function() {
-    if (newWorker) {
-      userClickedUpdate = true;
-      newWorker.postMessage({ type: 'SKIP_WAITING' });
-    }
-  });
-}
-if (updateBanner) {
-  updateBanner.addEventListener('click', function(e) {
-    if (e.target !== updateBtn && newWorker) {
-      userClickedUpdate = true;
-      newWorker.postMessage({ type: 'SKIP_WAITING' });
-    }
-  });
-}
+// Service worker registration är helt avstängd tills vidare
 
 // ── Event Listeners ────────────────────────────────────────────────────────
 if (searchBtn) {
