@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS Debug Test</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: white; }
+        .log { background: #333; padding: 10px; margin: 5px 0; border-radius: 5px; font-family: monospace; font-size: 12px; }
+        .error { background: #f44; }
+        .success { background: #4a4; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px; }
+    </style>
+</head>
+<body>
+    <h1>iOS Safari Debug</h1>
+    <div id="log"></div>
+
+    <button onclick="testServiceWorker()">Test Service Worker</button>
+    <button onclick="testGeolocation()">Test Geolocation</button>
+    <button onclick="clearAll()">Rensa allt</button>
+
+    <script>
+        function log(msg, isError) {
+            var div = document.createElement('div');
+            div.className = 'log ' + (isError ? 'error' : 'success');
+            div.textContent = new Date().toLocaleTimeString() + ': ' + msg;
+            document.getElementById('log').insertBefore(div, document.getElementById('log').firstChild);
+        }
+
+        // Log basic info
+        log('User Agent: ' + navigator.userAgent.substring(0, 50) + '...');
+        log('Service Worker stöds: ' + ('serviceWorker' in navigator));
+
+        // Check for existing SW
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+                log('Antal registrerade SW: ' + regs.length);
+                regs.forEach(function(r, i) {
+                    log('SW ' + i + ': ' + r.scope);
+                });
+            });
+        }
+
+        function testServiceWorker() {
+            log('Testar SW registration...');
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(function(reg) { log('SW registrerad OK: ' + reg.scope); })
+                    .catch(function(err) { log('SW fel: ' + err.message, true); });
+            } else {
+                log('Service Worker stöds inte', true);
+            }
+        }
+
+        function testGeolocation() {
+            log('Testar geolocation...');
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) { log('Position: ' + pos.coords.latitude + ', ' + pos.coords.longitude); },
+                    function(err) { log('Geo fel: ' + err.message, true); }
+                );
+            } else {
+                log('Geolocation stöds inte', true);
+            }
+        }
+
+        function clearAll() {
+            log('Rensar...');
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    regs.forEach(function(r) { r.unregister(); });
+                    log('SW avregistrerade: ' + regs.length);
+                });
+            }
+            if (window.caches) {
+                caches.keys().then(function(keys) {
+                    keys.forEach(function(k) { caches.delete(k); });
+                    log('Caches raderade: ' + keys.length);
+                });
+            }
+            try {
+                localStorage.clear();
+                log('localStorage rensat');
+            } catch(e) {
+                log('localStorage fel: ' + e.message, true);
+            }
+        }
+
+        // Global error handler
+        window.onerror = function(msg, url, line) {
+            log('JS ERROR: ' + msg + ' (rad ' + line + ')', true);
+        };
+    </script>
+</body>
+</html>
