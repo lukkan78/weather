@@ -2519,10 +2519,11 @@ function renderRadar(radarData, lat, lon) {
   // På iOS: visa bara en knapp för att ladda radarn manuellt
   if (isIOS && !window.radarManuallyLoaded) {
     radarSection.style.display = 'block';
-    radarSection.innerHTML = '<h3 class="section-title">📡 Radar</h3>' +
+    radarSection.classList.add('open');
+    radarSection.innerHTML = '<h3 class="section-title section-toggle">📡 Radar</h3>' +
       '<div class="radar-content" style="padding:20px;text-align:center;">' +
       '<p style="margin-bottom:15px;opacity:0.8;">Radar laddas manuellt på mobil för att spara minne</p>' +
-      '<button id="loadRadarBtn" type="button" class="radar-btn" style="padding:12px 24px;">📡 Ladda radar</button>' +
+      '<button id="loadRadarBtn" type="button" class="radar-btn" style="padding:12px 24px;font-size:16px;">📡 Ladda radar</button>' +
       '</div>';
 
     document.getElementById('loadRadarBtn')?.addEventListener('click', function(e) {
