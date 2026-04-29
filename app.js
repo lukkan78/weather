@@ -3405,9 +3405,15 @@ window.addEventListener('offline', () => {
   loadCache();
 });
 
-// ── Service Worker AVSTÄNGD för debugging ───────────────────────────────
-// Avregistrera alla gamla SW först
+// ── Service Worker AVSTÄNGD - blockera alla reloads ───────────────────────
 if ('serviceWorker' in navigator) {
+  // Blockera controllerchange från att orsaka reload
+  navigator.serviceWorker.addEventListener('controllerchange', function(e) {
+    e.stopImmediatePropagation();
+    console.log('SW controllerchange blockerad');
+  });
+
+  // Avregistrera alla gamla SW
   navigator.serviceWorker.getRegistrations().then(function(regs) {
     for (var i = 0; i < regs.length; i++) {
       regs[i].unregister();
@@ -3416,8 +3422,14 @@ if ('serviceWorker' in navigator) {
       console.log('Avregistrerade ' + regs.length + ' service workers');
     }
   });
+
+  // Rensa alla caches också
+  if (window.caches) {
+    caches.keys().then(function(keys) {
+      keys.forEach(function(k) { caches.delete(k); });
+    });
+  }
 }
-// Service worker registration är helt avstängd tills vidare
 
 // ── Event Listeners ────────────────────────────────────────────────────────
 if (searchBtn) {
