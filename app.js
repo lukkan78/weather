@@ -10,9 +10,15 @@ window.onerror = function(msg, url, line, col, error) {
 };
 
 window.addEventListener('unhandledrejection', function(e) {
+  var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Okänt fel';
+  // Ignorera Service Worker-relaterade fel (förväntat under avregistrering)
+  if (msg.indexOf('ServiceWorker') !== -1 || msg.indexOf('service worker') !== -1) {
+    console.log('SW fel (ignorerat):', msg);
+    return;
+  }
   var el = document.createElement('div');
   el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:orange;color:black;padding:20px;z-index:99999;font-family:monospace;font-size:14px;white-space:pre-wrap;';
-  el.textContent = 'PROMISE FEL:\n' + (e.reason ? (e.reason.message || e.reason) : 'Okänt fel');
+  el.textContent = 'PROMISE FEL:\n' + msg;
   document.body.appendChild(el);
 });
 
