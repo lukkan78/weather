@@ -2463,8 +2463,7 @@ async function refreshRadarData() {
   try {
     const radarData = await fetchRainViewerRadar();
     if (radarData?.frames?.length) {
-      // RADAR AVSTÄNGD
-      // renderRadar(radarData, lastRadarLat, lastRadarLon);
+      renderRadar(radarData, lastRadarLat, lastRadarLon);
       console.log('Radar auto-uppdaterad:', new Date().toLocaleTimeString('sv-SE'));
     }
   } catch (err) {
@@ -3285,8 +3284,7 @@ async function fetchWeather(lat, lon, name) {
     renderAirQuality(airQuality, pollen);
     renderUV(ens.hourly);
     renderNowcast(yrNowcast, omMinutely);
-    // RADAR AVSTÄNGD FÖR DEBUGGING
-    // renderRadar(radarData, lat, lon);
+    renderRadar(radarData, lat, lon);
 
     // Generera och visa beskrivande text
     const forecastTextStr = generateForecastText(ens, ens.daily, warnings);
@@ -3336,8 +3334,7 @@ function loadCache() {
     renderAirQuality(c.airQuality, c.pollen);
     renderUV(c.ens.hourly);
     renderNowcast(c.yrNowcast, c.omMinutely);
-    // RADAR AVSTÄNGD
-    // renderRadar(c.radarData, c.loc.lat, c.loc.lon);
+    renderRadar(c.radarData, c.loc.lat, c.loc.lon);
 
     emptyState.style.display = 'none';
     weatherDisplay.classList.add('active');
