@@ -2512,6 +2512,27 @@ function renderRadar(radarData, lat, lon) {
     return;
   }
 
+  // Detektera iOS Safari för att spara minne
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  // På iOS: visa bara en knapp för att ladda radarn manuellt
+  if (isIOS && !window.radarManuallyLoaded) {
+    radarSection.style.display = 'block';
+    radarSection.innerHTML = '<h3 class="section-title">📡 Radar</h3>' +
+      '<div class="radar-content" style="padding:20px;text-align:center;">' +
+      '<p style="margin-bottom:15px;opacity:0.8;">Radar laddas manuellt på mobil för att spara minne</p>' +
+      '<button id="loadRadarBtn" type="button" class="radar-btn" style="padding:12px 24px;">📡 Ladda radar</button>' +
+      '</div>';
+
+    document.getElementById('loadRadarBtn')?.addEventListener('click', function(e) {
+      e.preventDefault();
+      window.radarManuallyLoaded = true;
+      renderRadar(radarData, lat, lon);
+    });
+    return;
+  }
+
   radarSection.style.display = 'block';
   radarFrames = radarData.frames;
 
@@ -2635,23 +2656,15 @@ function initRadarMapRainViewer(lat, lon, host) {
   // Rensa gamla tile layers
   radarOverlays = [];
 
-  // Skapa tile layers för varje frame
+  // Skapa ENDAST nuvarande frame initialt (spara minne på mobil)
   radarFrames.forEach((frame, i) => {
-    const tileLayer = L.tileLayer(frame.url, {
-      opacity: 0,
-      tileSize: 512,
-      zoomOffset: -1
-    });
-    tileLayer.addTo(radarMap);
-    radarOverlays.push(tileLayer);
     frame.overlayIndex = i;
-    frame.loaded = true; // Markera som laddad (tiles laddas on-demand av Leaflet)
+    frame.loaded = false;
+    radarOverlays.push(null); // Placeholder - skapas vid behov
   });
 
-  // Visa aktuell frame
-  if (radarOverlays[radarFrameIndex]) {
-    radarOverlays[radarFrameIndex].setOpacity(0.7);
-  }
+  // Ladda och visa endast aktuell frame
+  loadRadarFrame(radarFrameIndex, 0.7);
 
   // Lägg till positionsmarkör
   const positionIcon = L.divIcon({
@@ -2668,6 +2681,29 @@ function initRadarMapRainViewer(lat, lon, host) {
   radarPositionMarker.on('click', () => {
     radarMap.setView([lat, lon], 8, { animate: true });
   });
+}
+
+// Lazy-load radar frame on demand (minnesbesparing)
+function loadRadarFrame(index, opacity) {
+  if (!radarMap || !radarFrames[index]) return;
+
+  // Skapa tile layer om den inte finns
+  if (!radarOverlays[index]) {
+    const frame = radarFrames[index];
+    const tileLayer = L.tileLayer(frame.url, {
+      opacity: 0,
+      tileSize: 512,
+      zoomOffset: -1
+    });
+    tileLayer.addTo(radarMap);
+    radarOverlays[index] = tileLayer;
+    frame.loaded = true;
+  }
+
+  // Sätt opacity
+  if (radarOverlays[index]) {
+    radarOverlays[index].setOpacity(opacity);
+  }
 }
 
 // Initiera radar-animation med requestAnimationFrame för smidig mobilprestanda
@@ -2702,17 +2738,16 @@ function initRadarAnimation() {
     radarFrameIndex = index;
     const frame = radarFrames[index];
 
-    // OPTIMERAD ANIMERING: Byt bara opacity mellan förskapade overlays
-    // Detta är MYCKET snabbare på mobil än att använda setUrl()
+    // OPTIMERAD ANIMERING med lazy-loading för minnesbesparing
     if (radarOverlays.length > 0 && radarMap) {
       // Dölj tidigare frame
       if (previousFrameIndex >= 0 && previousFrameIndex !== index && radarOverlays[previousFrameIndex]) {
         radarOverlays[previousFrameIndex].setOpacity(0);
       }
 
-      // Visa ny frame om den är laddad
-      if (radarOverlays[index] && frame.loaded) {
-        radarOverlays[index].setOpacity(0.7);
+      // Lazy-load och visa ny frame
+      loadRadarFrame(index, 0.7);
+      if (radarOverlays[index]) {
         radarOverlay = radarOverlays[index];
       }
 
