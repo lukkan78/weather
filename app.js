@@ -2791,8 +2791,8 @@ function initRadarAnimation() {
       if (radarFrameIndex >= radarFrames.length - 1) {
         radarFrameIndex = 0;
         previousFrameIndex = -1;
-        // Dölj alla frames först
-        radarOverlays.forEach(o => o.setOpacity(0));
+        // Dölj alla laddade frames först
+        radarOverlays.forEach(o => { if (o) o.setOpacity(0); });
         updateFrame(0);
       }
       lastFrameTime = performance.now();
